@@ -1,0 +1,9 @@
+# BASEJ-DNAQC Test Parameters
+# For testing on AWS Batch where reference files are accessible
+
+input_csv: "${projectDir}/../../unit_tests/data/chr22_fastq_illumina_pe_1sample_test.csv"
+genome: "GRCh38"
+outputDir: "results"
+workspace: "test_workspace"
+dataset_id: "test_dataset"
+n_reads: 50000

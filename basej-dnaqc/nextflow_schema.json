@@ -1,0 +1,293 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema",
+    "$id": "https://github.com/BioSkryb/nf-bioskryb-utils/pipelines/basej-dnaqc/nextflow_schema.json",
+    "title": "basej-dnaqc pipeline parameters",
+    "description": "Single-cell DNA QC pipeline with metrics collection and CNV cluster QC.",
+    "type": "object",
+    "definitions": {
+        "input_output_options": {
+            "title": "Input/output options",
+            "type": "object",
+            "fa_icon": "fas fa-terminal",
+            "description": "Define where the pipeline should find input data and save output data.",
+            "required": ["input_csv", "outputDir", "workspace", "dataset_id"],
+            "properties": {
+                "input_csv": {
+                    "type": "string",
+                    "format": "file-path",
+                    "mimetype": "text/csv",
+                    "pattern": "^\\S+\\.csv$",
+                    "description": "Path to comma-separated file containing information about the samples in the experiment.",
+                    "help_text": "You will need to create a design file with information about the samples in your experiment before running the pipeline. Use this parameter to specify its location. It must be a comma-separated file with at least 3 columns: biosampleName, read1, read2, and a header row.",
+                    "fa_icon": "fas fa-file-csv"
+                },
+                "workspace": {
+                    "type": "string",
+                    "description": "Workspace identifier for S3 output layout and tagging.",
+                    "help_text": "Used in S3 output prefixes and applied as an S3 object tag. Required for standardized output organization.",
+                    "fa_icon": "fas fa-layer-group"
+                },
+                "dataset_id": {
+                    "type": "string",
+                    "description": "Dataset identifier for S3 tagging and organization.",
+                    "help_text": "Applied as an S3 object tag to associate outputs with a specific dataset.",
+                    "fa_icon": "fas fa-database"
+                },
+                "resume_workflow_id": {
+                    "type": "string",
+                    "description": "Original workflow_id to reuse when resuming a run, keeping output paths stable and idempotent.",
+                    "help_text": "Set this to the workflow_id of a previous run when resuming so outputs are written to the same S3 location and duplication is avoided. When unset, workflow_id is derived from TOWER_WORKFLOW_ID.",
+                    "fa_icon": "fas fa-redo",
+                    "hidden": true
+                },
+                "workflow_id": {
+                    "type": "string",
+                    "description": "Workflow run identifier. Auto-populated from TOWER_WORKFLOW_ID or Nextflow session ID.",
+                    "help_text": "Unique identifier for this workflow run. Used in S3 output paths and tags. Defaults to TOWER_WORKFLOW_ID environment variable if running on Seqera Platform, otherwise uses the Nextflow session ID.",
+                    "fa_icon": "fas fa-fingerprint",
+                    "hidden": true
+                },
+                "outputDir": {
+                    "type": "string",
+                    "format": "directory-path",
+                    "pattern": "^s3://",
+                    "description": "S3 path where the results will be saved.",
+                    "help_text": "The S3 output directory for pipeline results (e.g., 's3://your-output-bucket/analysis/project_name/pipeline-basej-dnaqc').",
+                    "fa_icon": "fas fa-folder-open"
+                },
+                "timestamp": {
+                    "type": "string",
+                    "description": "Timestamp suffix for execution reports.",
+                    "help_text": "Optional timestamp for naming execution reports. Format: 'yyMMdd_HHmmss'.",
+                    "fa_icon": "fas fa-clock",
+                    "hidden": true
+                }
+            }
+        },
+        "reference_genome_options": {
+            "title": "Reference genome options",
+            "type": "object",
+            "fa_icon": "fas fa-dna",
+            "description": "Define the reference genome and associated files for alignment.",
+            "required": ["genome"],
+            "properties": {
+                "genome": {
+                    "type": "string",
+                    "description": "Name of the reference genome to use for alignment.",
+                    "help_text": "Name of the reference genome. This will automatically configure the reference FASTA and associated files. Supported genomes: GRCh38, GRCh37, GRCm39, ARSUCD2.",
+                    "fa_icon": "fas fa-dna",
+                    "enum": ["GRCh38", "GRCh37", "GRCm39", "ARSUCD2"],
+                    "default": "GRCh38"
+                },
+                "reference": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "Path to reference genome FASTA file. Overrides genome-based configuration.",
+                    "fa_icon": "fas fa-file-alt",
+                    "hidden": true
+                },
+                "intervals": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "Path to BED file with intervals for metrics collection.",
+                    "help_text": "Optional BED file with genomic intervals for focused metrics collection. If not provided, full genome is used.",
+                    "fa_icon": "fas fa-file-alt",
+                    "hidden": true
+                },
+                "dbsnp": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "Path to dbSNP VCF file.",
+                    "fa_icon": "fas fa-file-alt",
+                    "hidden": true
+                },
+                "dbsnp_index": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "Path to dbSNP VCF index file.",
+                    "fa_icon": "fas fa-file-alt",
+                    "hidden": true
+                },
+                "mills": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "Path to Mills indel VCF file.",
+                    "fa_icon": "fas fa-file-alt",
+                    "hidden": true
+                },
+                "mills_index": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "Path to Mills indel VCF index file.",
+                    "fa_icon": "fas fa-file-alt",
+                    "hidden": true
+                },
+                "onekg_omni": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "Path to 1000G Omni VCF file.",
+                    "fa_icon": "fas fa-file-alt",
+                    "hidden": true
+                },
+                "onekg_omni_index": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "Path to 1000G Omni VCF index file.",
+                    "fa_icon": "fas fa-file-alt",
+                    "hidden": true
+                }
+            }
+        },
+        "read_processing_options": {
+            "title": "Read processing options",
+            "type": "object",
+            "fa_icon": "fas fa-stream",
+            "description": "Options for read subsampling and quality control.",
+            "properties": {
+                "n_reads": {
+                    "type": "integer",
+                    "description": "Number of reads to subsample for QC analysis.",
+                    "help_text": "Number of reads to analyze (default: 2,000,000). Use 0 to analyze all reads. Subsampling to 2M reads enables faster QC while maintaining statistical power.",
+                    "fa_icon": "fas fa-random",
+                    "default": 2000000,
+                    "minimum": 0
+                },
+                "read_length": {
+                    "type": "integer",
+                    "description": "Maximum read length to keep after trimming.",
+                    "help_text": "Filter reads by length. Default: 50.",
+                    "fa_icon": "fas fa-ruler-horizontal",
+                    "default": 50,
+                    "hidden": true
+                },
+                "seqkit_sample_seed": {
+                    "type": "integer",
+                    "description": "Seed for reproducible subsampling.",
+                    "help_text": "Seed value for seqkit subsampling. Use the same seed to reproduce identical subsamples.",
+                    "fa_icon": "fas fa-key",
+                    "default": 12345,
+                    "hidden": true
+                },
+                "two_color_chemistry": {
+                    "type": "boolean",
+                    "description": "Enable Illumina two-color chemistry mode in fastp.",
+                    "help_text": "Set to true for Illumina two-color sequencing platforms.",
+                    "fa_icon": "fas fa-flask",
+                    "default": false,
+                    "hidden": true
+                },
+                "adapter_sequence": {
+                    "type": "string",
+                    "description": "Adapter sequence for R1 reads.",
+                    "help_text": "Adapter sequence to trim from R1 reads. Use 'auto' for auto-detection.",
+                    "fa_icon": "fas fa-cut",
+                    "default": "auto",
+                    "hidden": true
+                },
+                "adapter_sequence_r2": {
+                    "type": "string",
+                    "description": "Adapter sequence for R2 reads.",
+                    "help_text": "Adapter sequence to trim from R2 reads. Use 'auto' for auto-detection.",
+                    "fa_icon": "fas fa-cut",
+                    "default": "auto",
+                    "hidden": true
+                }
+            }
+        },
+        "cnv_options": {
+            "title": "CNV (Ginkgo) options",
+            "type": "object",
+            "fa_icon": "fas fa-chart-bar",
+            "description": "Options for CNV calling with Ginkgo.",
+            "properties": {
+                "bin_size": {
+                    "type": "integer",
+                    "description": "Bin size for CNV analysis.",
+                    "help_text": "Bin size in base pairs for CNV segmentation. Options: 500000, 1000000, 2000000.",
+                    "fa_icon": "fas fa-ruler",
+                    "enum": [500000, 1000000, 2000000],
+                    "default": 1000000
+                },
+                "ginko_ref_dir": {
+                    "type": "string",
+                    "format": "directory-path",
+                    "description": "Path to Ginkgo reference directory.",
+                    "help_text": "Directory containing Ginkgo reference files. Auto-populated from genomes.config.",
+                    "fa_icon": "fas fa-folder",
+                    "hidden": true
+                },
+                "min_ploidy": {
+                    "type": "number",
+                    "description": "Minimum ploidy for CNV calling.",
+                    "help_text": "Minimum expected ploidy value.",
+                    "fa_icon": "fas fa-minus",
+                    "default": 1.5,
+                    "hidden": true
+                },
+                "max_ploidy": {
+                    "type": "number",
+                    "description": "Maximum ploidy for CNV calling.",
+                    "help_text": "Maximum expected ploidy value.",
+                    "fa_icon": "fas fa-plus",
+                    "default": 6,
+                    "hidden": true
+                },
+                "min_bin_width": {
+                    "type": "integer",
+                    "description": "Minimum bin width for CNV segmentation.",
+                    "help_text": "Minimum number of bins for a CNV segment.",
+                    "fa_icon": "fas fa-ruler-horizontal",
+                    "default": 5,
+                    "hidden": true
+                },
+                "is_haplotype": {
+                    "type": "integer",
+                    "description": "Haplotype model for CNV calling.",
+                    "help_text": "1 for haploid, 2 for diploid.",
+                    "fa_icon": "fas fa-dna",
+                    "default": 2,
+                    "hidden": true
+                }
+            }
+        },
+        "sequencing_options": {
+            "title": "Sequencing platform options",
+            "type": "object",
+            "fa_icon": "fas fa-microchip",
+            "description": "Options for sequencing platform configuration.",
+            "properties": {
+                "platform": {
+                    "type": "string",
+                    "description": "Sequencing platform. Auto-detected from CSV columns (cram → Ultima, read1/read2 → Illumina).",
+                    "help_text": "Auto-detected from the input CSV. If a non-empty 'cram' column is found in any row, the platform is set to Ultima; otherwise Illumina. The detected value is used in the read group PL tag.",
+                    "fa_icon": "fas fa-microchip",
+                    "enum": ["Illumina", "Ultima", "Element"],
+                    "default": ""
+                },
+                "architecture": {
+                    "type": "string",
+                    "description": "Compute architecture for AWS Batch.",
+                    "help_text": "The CPU architecture for AWS Batch compute. Use 'arm' for ARM-based instances (Graviton, recommended) or 'x86' for Intel/AMD.",
+                    "fa_icon": "fas fa-server",
+                    "enum": ["arm", "x86"],
+                    "default": "arm"
+                },
+                "pipeline_tool": {
+                    "type": "string",
+                    "description": "Alignment/metrics tool stack to use.",
+                    "help_text": "Select the alignment and metrics tool stack. 'opensource' uses BWA-MEM2 + samtools markdup + Picard (no license required). 'sentieon' uses the proprietary Sentieon tools (requires a valid Sentieon license).",
+                    "fa_icon": "fas fa-toolbox",
+                    "enum": ["opensource", "sentieon"],
+                    "default": "opensource"
+                }
+            }
+        }
+    },
+    "allOf": [
+        { "$ref": "#/definitions/input_output_options" },
+        { "$ref": "#/definitions/reference_genome_options" },
+        { "$ref": "#/definitions/read_processing_options" },
+        { "$ref": "#/definitions/cnv_options" },
+        { "$ref": "#/definitions/sequencing_options" }
+    ]
+}

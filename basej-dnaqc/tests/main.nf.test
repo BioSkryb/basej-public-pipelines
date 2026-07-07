@@ -1,0 +1,117 @@
+nextflow_pipeline {
+
+    name "Test Workflow main.nf"
+    script "main.nf"
+
+    test("dna_qc_GRCh38_test") {
+        when {
+            params {
+                outputDir    = "${outputDir}"
+                workspace    = "demo"
+                workflow_id  = "test_GRCh38"
+                input_csv    = "$baseDir/tests/data/inputs/input_qcTest3.csv"
+                max_memory   = "24.GB"
+                max_cpus     = "8"
+                architecture = "x86"
+                genome       = "GRCh38"
+                n_reads      = 500000
+            }
+        }
+
+        then {
+            assertAll(
+
+                { assert workflow.success },
+
+                { assert path("${outputDir}/workflow_outputs/demo/test_GRCh38/reports/multiqc_report.html").exists() },
+
+                // Check dnaqc_all_metrics.tsv - full-schema TSV for nf-test validation
+                {
+                    def f = path("${outputDir}/workflow_outputs/demo/test_GRCh38/metrics/qc_metrics/dnaqc_all_metrics.tsv")
+                    assert f.exists()
+                    def lines  = f.readLines()
+                    def header = lines[0].split('\t').toList()
+
+                    // Required columns must be present
+                    ['qc_score', 'qc_status', 'pct_chrm', 'align_pct_chimeras',
+                     'ginkgo_cnv_mapd', 'ginkgo_cnv_skew', 'preseq_count',
+                     'total_reads', 'final_reads', 'subsampled'].each { col ->
+                        assert header.contains(col) : "Missing column: ${col}"
+                    }
+
+                    def idx = { col -> header.indexOf(col) }
+
+                    // Expected stable values per sample (chr22 test data, 2 samples in input_qcTest3.csv)
+                    // final_reads ~499K: n_reads=500000 total reads (R1+R2) kept after seqkit subsampling
+                    def expected = [
+                        'chr22_testsample1': [total_reads: 4132446, final_reads: 498924, subsampled: 'True', qc_status: 'FAIL', qc_score: 2],
+                        'chr22_testsample2': [total_reads: 4132446, final_reads: 498924, subsampled: 'True', qc_status: 'FAIL', qc_score: 2],
+                    ]
+
+                    assert lines.size() - 1 == expected.size() : "Expected ${expected.size()} samples, got ${lines.size() - 1}"
+
+                    for (int i = 1; i < lines.size(); i++) {
+                        def cols   = lines[i].split('\t', -1)
+                        def sample = cols[0]
+                        def exp    = expected[sample]
+                        assert exp != null : "Unexpected sample in dnaqc_all_metrics.tsv: ${sample}"
+
+                        assert cols[idx('total_reads')].trim().toLong()  == exp.total_reads : "total_reads mismatch for ${sample}"
+                        assert cols[idx('final_reads')].trim().toLong()  == exp.final_reads : "final_reads mismatch for ${sample}"
+                        assert cols[idx('subsampled')].trim()            == exp.subsampled  : "subsampled mismatch for ${sample}"
+                        assert cols[idx('qc_status')].trim()             == exp.qc_status   : "qc_status mismatch for ${sample}"
+                        assert cols[idx('qc_score')].trim().toInteger()  == exp.qc_score    : "qc_score mismatch for ${sample}"
+
+                        // pct_chrm must be a fraction (0-1) — regression: was stored as percentage before
+                        def pctChrm = cols[idx('pct_chrm')].trim()
+                        if (pctChrm && pctChrm != 'None') {
+                            assert pctChrm.toDouble() >= 0.0 && pctChrm.toDouble() <= 1.0 : "pct_chrm not a fraction for ${sample}: ${pctChrm}"
+                        }
+
+                        // align_pct_chimeras must be a fraction (0-1) — regression: was stored as percentage before
+                        def chimeras = cols[idx('align_pct_chimeras')].trim()
+                        if (chimeras && chimeras != 'None') {
+                            assert chimeras.toDouble() >= 0.0 && chimeras.toDouble() <= 1.0 : "align_pct_chimeras not a fraction for ${sample}: ${chimeras}"
+                        }
+
+                        // GRCh38 uses chr22-only data: Ginkgo may produce results if coverage is sufficient
+                        // After dedup changes, coverage improved and Ginkgo is now able to generate metrics
+                        def mapd = cols[idx('ginkgo_cnv_mapd')].trim()
+                        def skew = cols[idx('ginkgo_cnv_skew')].trim()
+                        // Accept empty/None OR valid numeric values (no longer expect empty)
+                        if (mapd && mapd != 'None') {
+                            assert mapd.toDouble() > 0 : "ginkgo_cnv_mapd must be positive if present for ${sample}: ${mapd}"
+                        }
+                        if (skew && skew != 'None') {
+                            assert skew.toDouble() >= -1.0 && skew.toDouble() <= 1.0 : "ginkgo_cnv_skew should be between -1 and 1 for ${sample}: ${skew}"
+                        }
+
+                        // preseq_count must be a positive integer
+                        def preseq = cols[idx('preseq_count')].trim()
+                        if (preseq && preseq != 'None') {
+                            assert preseq.toLong() > 0 : "preseq_count should be > 0 for ${sample}"
+                        }
+                    }
+                },
+
+                // Verify dnaqc_summary parquet files exist for all samples
+                {
+                    assert path("${outputDir}/tables/dnaqc_summary/workspace=demo/workflow_id=test_GRCh38/biosample=chr22_testsample1/output.parquet").exists()
+                    assert path("${outputDir}/tables/dnaqc_summary/workspace=demo/workflow_id=test_GRCh38/biosample=chr22_testsample2/output.parquet").exists()
+                },
+
+                // Verify cnv_summary parquet files exist for all samples
+                {
+                    assert path("${outputDir}/tables/cnv_summary/workspace=demo/workflow_id=test_GRCh38/biosample=chr22_testsample1/output.parquet").exists()
+                    assert path("${outputDir}/tables/cnv_summary/workspace=demo/workflow_id=test_GRCh38/biosample=chr22_testsample2/output.parquet").exists()
+                },
+
+                { assert path("${outputDir}/workflow_outputs/demo/test_GRCh38/cnv/ginkgo_segcopy/SegCopy.binsize_1000000.tsv").exists() },
+                { assert path("${outputDir}/workflow_outputs/demo/test_GRCh38/qc_plots/CNV-Quadrants_mqc.jpg").exists() },
+                { assert path("${outputDir}/workflow_outputs/demo/test_GRCh38/qc_plots/QC_composition_mqc.jpg").exists() }
+            )
+        }
+    }
+
+
+}
