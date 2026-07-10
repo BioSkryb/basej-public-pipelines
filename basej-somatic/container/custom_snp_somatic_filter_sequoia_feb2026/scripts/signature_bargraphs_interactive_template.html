@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Signature Bargraphs — Interactive</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    background: #fff;
+    margin: 0;
+    padding: 20px 10px;
+  }
+  #chart { overflow-x: auto; }
+  svg { display: block; }
+  #tooltip {
+    position: fixed;
+    display: none;
+    background: rgba(30,30,30,0.88);
+    color: #fff;
+    border-radius: 5px;
+    padding: 8px 12px;
+    font-size: 12px;
+    pointer-events: none;
+    line-height: 1.55;
+    max-width: 240px;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.35);
+    z-index: 9999;
+  }
+</style>
+</head>
+<body>
+<div id="chart"></div>
+<div id="tooltip"></div>
+<script>
+const chartData = {{CHART_DATA}};
+
+(function () {
+  "use strict";
+
+  const { panels, signatures, yMax, cosineSim } = chartData;
+
+  // ── layout ──────────────────────────────────────────────────────────────────
+  const MARGIN    = { top: 58, right: 260, bottom: 30, left: 72 };
+  const PANEL_H   = 360;
+  const PANEL_GAP = 72;
+  const LABEL_H   = 28;
+  const SVG_W     = 1500;
+
+  const chartW = SVG_W - MARGIN.left - MARGIN.right;
+  const SVG_H  = MARGIN.top
+               + panels.length * (LABEL_H + PANEL_H)
+               + (panels.length - 1) * PANEL_GAP
+               + MARGIN.bottom;
+
+  // ── tooltip ─────────────────────────────────────────────────────────────────
+  const tip = d3.select("#tooltip");
+  function showTip(event, html) {
+    tip.style("display", "block").html(html);
+    moveTip(event);
+  }
+  function moveTip(event) {
+    const px = event.clientX, py = event.clientY;
+    const tw = tip.node().offsetWidth  || 180;
+    const th = tip.node().offsetHeight || 60;
+    const wx = window.innerWidth, wy = window.innerHeight;
+    tip.style("left", (px + 14 + tw > wx ? px - tw - 10 : px + 14) + "px")
+       .style("top",  (py + 16 + th > wy ? py - th - 6  : py + 16) + "px");
+  }
+  function hideTip() { tip.style("display", "none"); }
+
+  // ── signature selection (legend click) ──────────────────────────────────────
+  let selectedSig = null;
+
+  function applySelection() {
+    d3.selectAll(".sig-bar").attr("opacity", function () {
+      if (selectedSig === null) return 1;
+      return d3.select(this).attr("data-sig") === selectedSig ? 1 : 0.08;
+    });
+    d3.selectAll(".leg-highlight").attr("opacity", function () {
+      return d3.select(this).attr("data-sig") === selectedSig ? 1 : 0;
+    });
+    d3.selectAll(".leg-label")
+      .style("font-weight", function () {
+        return d3.select(this).attr("data-sig") === selectedSig ? "bold" : "normal";
+      })
+      .style("fill", function () {
+        return d3.select(this).attr("data-sig") === selectedSig ? "#111" : "#444";
+      });
+  }
+
+  // ── y scale (shared) ─────────────────────────────────────────────────────────
+  const yScale = d3.scaleLinear().domain([0, yMax]).range([PANEL_H, 0]);
+  const yTicks = d3.range(0, yMax + 1, 5);
+
+  const sigColorMap = {};
+  signatures.forEach(function (s) { sigColorMap[s.name] = s.color; });
+  const sigNames = signatures.map(function (s) { return s.name; });
+
+  // ── SVG ──────────────────────────────────────────────────────────────────────
+  const svg = d3.select("#chart")
+    .append("svg")
+    .attr("width",  SVG_W)
+    .attr("height", SVG_H)
+    .style("background", "#fff");
+
+  // ── draw each panel ──────────────────────────────────────────────────────────
+  panels.forEach(function (panel, pi) {
+    const panelTop = MARGIN.top + pi * (LABEL_H + PANEL_H + PANEL_GAP);
+
+    const panelG = svg.append("g")
+      .attr("transform", "translate(" + MARGIN.left + "," + panelTop + ")");
+
+    // panel letter label
+    panelG.append("text")
+      .attr("x", -54).attr("y", LABEL_H - 2)
+      .style("font-size", "16px").style("font-weight", "bold").style("fill", "#111")
+      .text(panel.id);
+
+    // panel title (centred)
+    panelG.append("text")
+      .attr("x", chartW / 2).attr("y", LABEL_H - 2)
+      .attr("text-anchor", "middle")
+      .style("font-size", "14px").style("font-weight", "bold").style("fill", "#111")
+      .text(panel.title);
+
+    // y-axis label (rotated)
+    panelG.append("text")
+      .attr("transform", "rotate(-90)")
+      .attr("x", -(LABEL_H + PANEL_H / 2))
+      .attr("y", -58)
+      .attr("text-anchor", "middle")
+      .style("font-size", "13px").style("fill", "#333")
+      .text("Number of somatic mutations");
+
+    // y-axis
+    const yAxisG = panelG.append("g")
+      .attr("transform", "translate(0," + LABEL_H + ")")
+      .call(
+        d3.axisLeft(yScale)
+          .tickValues(yTicks)
+          .tickSize(4)
+          .tickFormat(function (d) { return d % 10 === 0 ? d : ""; })
+      );
+    yAxisG.select(".domain").remove();
+    yAxisG.selectAll(".tick line").attr("stroke", "#bbb");
+    yAxisG.selectAll(".tick text").style("font-size", "12px").style("fill", "#444");
+
+    // y gridlines
+    const gridG = panelG.append("g").attr("transform", "translate(0," + LABEL_H + ")");
+    yTicks.forEach(function (t) {
+      gridG.append("line")
+        .attr("x1", 0).attr("x2", chartW)
+        .attr("y1", yScale(t)).attr("y2", yScale(t))
+        .attr("stroke",           t === 0 ? "#bbb" : "#D9D9D9")
+        .attr("stroke-width",     t === 0 ? 0.6    : 0.8)
+        .attr("stroke-dasharray", t === 0 ? null   : "4,3");
+    });
+
+    // x scale — all samples fill the full chart width
+    const xScale = d3.scaleBand()
+      .domain(panel.samples.map(function (s) { return s.sample; }))
+      .range([0, chartW])
+      .paddingInner(0.05)
+      .paddingOuter(0.02);
+
+    const barW = Math.max(xScale.bandwidth(), 0.5);
+
+    // stacked bars
+    const barsG = panelG.append("g")
+      .attr("transform", "translate(0," + LABEL_H + ")");
+
+    panel.samples.forEach(function (sample) {
+      let y0 = 0;
+      sigNames.forEach(function (sigName) {
+        const count = (sample.mutations && sample.mutations[sigName]) || 0;
+        if (count <= 0) return;
+
+        const y1    = y0 + count;
+        const rectY = yScale(y1);
+        const rectH = Math.max(yScale(y0) - yScale(y1), 0.5);
+
+        barsG.append("rect")
+          .attr("class",    "sig-bar")
+          .attr("data-sig", sigName)
+          .attr("x",      xScale(sample.sample))
+          .attr("y",      rectY)
+          .attr("width",  barW)
+          .attr("height", rectH)
+          .attr("fill",   sigColorMap[sigName] || "#ccc")
+          .on("mouseover", function (event) {
+            if (selectedSig === null || selectedSig === sigName)
+              d3.select(this).attr("opacity", 0.72);
+
+            const cs = cosineSim && cosineSim[sample.sample] && cosineSim[sample.sample][sigName];
+            const cosineLine = cs != null
+              ? "<br>Cosine sim: <strong>" + cs.toFixed(4) + "</strong>"
+              : "";
+            showTip(event,
+              "<strong>" + sigName + "</strong><br>" +
+              "Mutations: <strong>" + count + "</strong>" +
+              cosineLine +
+              "<br><span style='color:#aaa;font-size:10px'>" + sample.sample + "</span>"
+            );
+          })
+          .on("mousemove", moveTip)
+          .on("mouseout", function () {
+            const active = selectedSig === null || selectedSig === sigName;
+            d3.select(this).attr("opacity", active ? 1 : 0.08);
+            hideTip();
+          });
+
+        y0 = y1;
+      });
+    });
+  });
+
+  // ── legend (right of SVG, click to highlight) ────────────────────────────────
+  const legX = MARGIN.left + chartW + 18;
+  const legY = MARGIN.top;
+  const legG = svg.append("g").attr("transform", "translate(" + legX + "," + legY + ")");
+
+  legG.append("text")
+    .attr("x", 0).attr("y", 0)
+    .style("font-size", "14px").style("font-weight", "bold").style("fill", "#222")
+    .text("Signature");
+
+  legG.append("text")
+    .attr("x", 0).attr("y", 16)
+    .style("font-size", "11px").style("fill", "#999")
+    .text("click to highlight");
+
+  signatures.forEach(function (sig, i) {
+    const iy = 32 + i * 24;
+
+    const legItem = legG.append("g")
+      .style("cursor", "pointer")
+      .on("click", function () {
+        selectedSig = (selectedSig === sig.name) ? null : sig.name;
+        applySelection();
+      })
+      .on("mouseover", function () {
+        if (selectedSig !== sig.name)
+          legG.select(".leg-highlight[data-sig='" + sig.name + "']").attr("opacity", 0.5);
+      })
+      .on("mouseout", function () {
+        if (selectedSig !== sig.name)
+          legG.select(".leg-highlight[data-sig='" + sig.name + "']").attr("opacity", 0);
+      });
+
+    // highlight background
+    legItem.append("rect")
+      .attr("class",    "leg-highlight")
+      .attr("data-sig", sig.name)
+      .attr("x", -4).attr("y", iy - 3)
+      .attr("width", 220).attr("height", 22)
+      .attr("fill", "#e0e0e0").attr("rx", 3)
+      .attr("opacity", 0);
+
+    // colour swatch
+    legItem.append("rect")
+      .attr("x", 0).attr("y", iy)
+      .attr("width", 17).attr("height", 17)
+      .attr("fill", sig.color);
+
+    // label
+    legItem.append("text")
+      .attr("class",    "leg-label")
+      .attr("data-sig", sig.name)
+      .attr("x", 24).attr("y", iy + 13)
+      .style("font-size", "13px").style("fill", "#444")
+      .text(sig.name);
+  });
+
+})();
+</script>
+</body>
+</html>

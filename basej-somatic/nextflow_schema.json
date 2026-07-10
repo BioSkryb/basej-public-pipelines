@@ -1,0 +1,135 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema",
+    "$id": "https://github.com/BioSkryb/nf-bioskryb-utils/pipelines/basej-somatic/nextflow_schema.json",
+    "title": "basej-somatic pipeline parameters",
+    "description": "Single-cell somatic SNP/indel variant filtering pipeline (BAM → VCF → filter).",
+    "type": "object",
+    "definitions": {
+        "input_output_options": {
+            "title": "Input/output options",
+            "type": "object",
+            "fa_icon": "fas fa-terminal",
+            "description": "Define where the pipeline should find input data and save output data.",
+            "required": ["input_csv", "outputDir", "workspace", "project"],
+            "properties": {
+                "input_csv": {
+                    "type": "string",
+                    "format": "file-path",
+                    "mimetype": "text/csv",
+                    "pattern": "^\\S+\\.csv$",
+                    "description": "Path to comma-separated file containing information about the samples in the experiment.",
+                    "help_text": "You will need to create a design file with information about the samples in your experiment before running the pipeline. Use this parameter to specify its location. It must be a comma-separated file with at least the columns: biosampleName, bam, bai, and a header row.",
+                    "fa_icon": "fas fa-file-csv"
+                },
+                "workspace": {
+                    "type": "string",
+                    "description": "Workspace identifier for S3 output layout and tagging.",
+                    "help_text": "Used in S3 output prefixes and applied as an S3 object tag. Required for standardized output organization.",
+                    "fa_icon": "fas fa-layer-group"
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project identifier for S3 tagging and organization.",
+                    "help_text": "Applied as an S3 object tag to associate outputs with a specific project.",
+                    "fa_icon": "fas fa-project-diagram"
+                },
+                "resume_workflow_id": {
+                    "type": "string",
+                    "description": "Original workflow_id to reuse when resuming a run, keeping output paths stable and idempotent.",
+                    "help_text": "Set this to the workflow_id of a previous run when resuming so outputs are written to the same S3 location and duplication is avoided. When unset, workflow_id is derived from TOWER_WORKFLOW_ID.",
+                    "fa_icon": "fas fa-redo",
+                    "hidden": true
+                },
+                "workflow_id": {
+                    "type": "string",
+                    "description": "Workflow run identifier. Auto-populated from TOWER_WORKFLOW_ID or Nextflow session ID.",
+                    "help_text": "Unique identifier for this workflow run. Used in S3 output paths and tags. Defaults to TOWER_WORKFLOW_ID environment variable if running on Seqera Platform, otherwise uses the Nextflow session ID.",
+                    "fa_icon": "fas fa-fingerprint",
+                    "hidden": true
+                },
+                "outputDir": {
+                    "type": "string",
+                    "format": "directory-path",
+                    "pattern": "^s3://",
+                    "description": "S3 path where the results will be saved.",
+                    "help_text": "The S3 output directory for pipeline results (e.g., 's3://your-output-bucket/analysis/project_name/pipeline-basej-somatic').",
+                    "fa_icon": "fas fa-folder-open"
+                },
+                "timestamp": {
+                    "type": "string",
+                    "description": "Timestamp suffix for execution reports.",
+                    "help_text": "Optional timestamp for naming execution reports. Format: 'yyMMdd_HHmmss'.",
+                    "fa_icon": "fas fa-clock",
+                    "hidden": true
+                }
+            }
+        },
+        "reference_genome_options": {
+            "title": "Reference genome options",
+            "type": "object",
+            "fa_icon": "fas fa-dna",
+            "description": "Define the reference genome and associated files for variant calling.",
+            "required": ["genome"],
+            "properties": {
+                "genome": {
+                    "type": "string",
+                    "description": "Name of the reference genome to use for variant calling.",
+                    "help_text": "Name of the reference genome. This will automatically configure the reference FASTA and associated files. Supported genomes: GRCh38, GRCh37, GRCm39, ARSUCD2.",
+                    "fa_icon": "fas fa-dna",
+                    "enum": ["GRCh38", "GRCh37", "GRCm39", "ARSUCD2"],
+                    "default": "GRCh38"
+                },
+                "reference": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "Path to reference genome FASTA file. Overrides genome-based configuration.",
+                    "fa_icon": "fas fa-file-alt",
+                    "hidden": true
+                },
+                "dbsnp": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "Path to dbSNP VCF file.",
+                    "fa_icon": "fas fa-file-alt",
+                    "hidden": true
+                },
+                "dbsnp_index": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "Path to dbSNP VCF index file.",
+                    "fa_icon": "fas fa-file-alt",
+                    "hidden": true
+                }
+            }
+        },
+        "sequencing_options": {
+            "title": "Sequencing platform options",
+            "type": "object",
+            "fa_icon": "fas fa-microchip",
+            "description": "Options for sequencing platform and compute architecture configuration.",
+            "properties": {
+                "platform": {
+                    "type": "string",
+                    "description": "Sequencing platform used to generate the BAM data.",
+                    "help_text": "The sequencing platform identifier. Used for platform-specific variant calling settings.",
+                    "fa_icon": "fas fa-microchip",
+                    "enum": ["Illumina", "Ultima", "Element"],
+                    "default": "Illumina"
+                },
+                "architecture": {
+                    "type": "string",
+                    "description": "Compute architecture for AWS Batch.",
+                    "help_text": "The CPU architecture for AWS Batch compute. Use 'arm' for ARM-based instances (Graviton, recommended) or 'x86' for Intel/AMD.",
+                    "fa_icon": "fas fa-server",
+                    "enum": ["arm", "x86"],
+                    "default": "arm"
+                }
+            }
+        }
+    },
+    "allOf": [
+        { "$ref": "#/definitions/input_output_options" },
+        { "$ref": "#/definitions/reference_genome_options" },
+        { "$ref": "#/definitions/sequencing_options" }
+    ]
+}

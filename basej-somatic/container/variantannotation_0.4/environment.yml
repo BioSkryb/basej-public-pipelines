@@ -1,0 +1,16 @@
+name: app_env
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.10
+  - bioconda::bcftools=1.21
+  - bioconda::tabix=1.11
+  - bioconda::ensembl-vep=111.0-0
+  - pip
+  - pip:
+    - vaex==4.17.0
+    - pandas==2.0.3
+
+
