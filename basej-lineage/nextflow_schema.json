@@ -1,0 +1,280 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema",
+    "$id": "https://github.com/BioSkryb/nf-bioskryb-utils/pipelines/basej-lineage/nextflow_schema.json",
+    "title": "basej-lineage pipeline parameters",
+    "description": "Single-cell somatic lineage analysis pipeline (annotated VCF → phylogeny → heatmaps).",
+    "type": "object",
+    "definitions": {
+        "input_output_options": {
+            "title": "Input/output options",
+            "type": "object",
+            "fa_icon": "fas fa-terminal",
+            "description": "Per-sample annotated VCFs (for genotype tables) and output location.",
+            "required": ["outputDir", "workspace", "project"],
+            "properties": {
+                "input_csv": {
+                    "type": "string",
+                    "format": "file-path",
+                    "mimetype": "text/csv",
+                    "pattern": "^\\S+\\.csv$",
+                    "description": "Path to comma-separated file containing per-sample VCF paths.",
+                    "help_text": "Header row: biosampleName,vcf[,vcf_index]. The vcf is the somatic annotated VCF from basej-somatic (vcf_somatic output). vcf_index is optional; when omitted the .tbi is derived as <vcf>.tbi. Extra columns (e.g. group) are ignored. VCFs are used only for per-sample genotype tables, not to rebuild matrices.",
+                    "fa_icon": "fas fa-file-csv"
+                },
+                "workspace": {
+                    "type": "string",
+                    "description": "Workspace identifier for S3 output layout and tagging.",
+                    "help_text": "Used in S3 output prefixes and applied as an S3 object tag. Required for standardized output organization.",
+                    "fa_icon": "fas fa-layer-group"
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project identifier for S3 tagging and organization.",
+                    "help_text": "Applied as an S3 object tag to associate outputs with a specific project.",
+                    "fa_icon": "fas fa-project-diagram"
+                },
+                "resume_workflow_id": {
+                    "type": "string",
+                    "description": "Original workflow_id to reuse when resuming a run, keeping output paths stable and idempotent.",
+                    "help_text": "Set this to the workflow_id of a previous run when resuming so outputs are written to the same S3 location and duplication is avoided. When unset, workflow_id is derived from TOWER_WORKFLOW_ID.",
+                    "fa_icon": "fas fa-redo",
+                    "hidden": true
+                },
+                "workflow_id": {
+                    "type": "string",
+                    "description": "Workflow run identifier. Auto-populated from TOWER_WORKFLOW_ID or Nextflow session ID.",
+                    "help_text": "Unique identifier for this workflow run. Used in S3 output paths and tags. Defaults to TOWER_WORKFLOW_ID environment variable if running on Seqera Platform, otherwise uses the Nextflow session ID.",
+                    "fa_icon": "fas fa-fingerprint",
+                    "hidden": true
+                },
+                "outputDir": {
+                    "type": "string",
+                    "format": "directory-path",
+                    "pattern": "^s3://",
+                    "description": "S3 path where the results will be saved.",
+                    "help_text": "The S3 output directory for pipeline results (e.g., 's3://your-output-bucket/analysis/project_name/pipeline-basej-lineage').",
+                    "fa_icon": "fas fa-folder-open"
+                },
+                "vcf_dir": {
+                    "type": "string",
+                    "format": "directory-path",
+                    "description": "Directory of *_somatic_annotated.vcf.gz + .tbi pairs (alternative to input_csv).",
+                    "help_text": "Used instead of input_csv. Expects *_somatic_annotated{,_filtered}.vcf.gz with matching .tbi. VCFs feed the per-sample genotype tables consumed by POSTPROCESS.",
+                    "fa_icon": "fas fa-folder"
+                },
+                "timestamp": {
+                    "type": "string",
+                    "description": "Timestamp suffix for execution reports.",
+                    "help_text": "Optional timestamp for naming execution reports. Format: 'yyMMdd_HHmmss'.",
+                    "fa_icon": "fas fa-clock",
+                    "hidden": true
+                }
+            }
+        },
+        "reference_genome_options": {
+            "title": "Reference genome options",
+            "type": "object",
+            "fa_icon": "fas fa-dna",
+            "description": "Reference genome selection for species/assembly labels.",
+            "required": ["genome"],
+            "properties": {
+                "genome": {
+                    "type": "string",
+                    "description": "Reference genome assembly identifier.",
+                    "help_text": "Used for labelling outputs and optional SigProfiler genome build. Supported: GRCh38, GRCm39.",
+                    "fa_icon": "fas fa-dna",
+                    "enum": ["GRCh38", "GRCm39"],
+                    "default": "GRCh38"
+                }
+            }
+        },
+        "matrix_inputs": {
+            "title": "Matrix inputs (from basej-somatic)",
+            "type": "object",
+            "fa_icon": "fas fa-table",
+            "description": "Pre-built matrices produced by basej-somatic. NR/NV drive phylogeny + placement; the binary matrix drives mutational signatures.",
+            "required": ["nr_matrix", "nv_matrix"],
+            "properties": {
+                "nr_matrix": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "Pre-built NR (total depth) matrix TSV (REQUIRED).",
+                    "help_text": "basej-somatic downstream_inputs output: <group>_NR_...PlusMandatoryNonEmpty.tsv. Rows = CHROM_POS_REF_ALT, columns = samples. Used as the single 'unfiltered' scheme for SEQUOIA phylogeny + variant placement. Use the PlusMandatoryNonEmpty scheme (not ForPhylogeny): the ForPhylogeny matrix is placed in full by the phylogeny step, which starves variant placement and skips the VAF/digital heatmaps.",
+                    "fa_icon": "fas fa-table"
+                },
+                "nv_matrix": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "Pre-built NV (variant read) matrix TSV, paired with nr_matrix (REQUIRED).",
+                    "help_text": "basej-somatic downstream_inputs output: <group>_NV_...PlusMandatoryNonEmpty.tsv (must pair with the same-scheme nr_matrix).",
+                    "fa_icon": "fas fa-table"
+                },
+                "binary_matrix": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "Pre-binarized 0/1 variant x sample matrix for the mutational-signature branch.",
+                    "help_text": "basej-somatic downstream_inputs output: <group>_binary_matrix_...PlusMandatoryNonEmpty.tsv. When unset, the mutational-signature branch is skipped.",
+                    "fa_icon": "fas fa-table"
+                },
+                "genotype_bin": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "Optional pre-built binarized genotype matrix (0/0.5/1) — 'Option D'.",
+                    "help_text": "When provided, SEQUOIA_PHYLOGENY skips VAF discretization and uses these genotype calls. Not produced by the standard basej-somatic run; leave unset to discretize VAF from NR/NV.",
+                    "fa_icon": "fas fa-table"
+                },
+                "mandatory_variants_qc_status": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "Optional mandatory-variant QC status table from basej-somatic.",
+                    "help_text": "basej-somatic mandatory_qc_status output: mandatory_variants_qc_status_<group>.tsv. When set, mandatory variants that FAIL QC (PassesBoth != Yes) are removed from the POSTPROCESS heatmaps. Unset => show all placed variants.",
+                    "fa_icon": "fas fa-check-double"
+                }
+            }
+        },
+        "cohort_options": {
+            "title": "Cohort / sample options",
+            "type": "object",
+            "fa_icon": "fas fa-users",
+            "properties": {
+                "cohort_id": {
+                    "type": "string",
+                    "description": "Cohort identifier used to label cohort-level outputs.",
+                    "help_text": "Groups the samples for phylogeny + signatures. Matches the basej-somatic group (e.g. 'Patient').",
+                    "default": "cohort",
+                    "fa_icon": "fas fa-users"
+                },
+                "gender": {
+                    "type": "string",
+                    "description": "Sample gender (chrX/chrY handling in SEQUOIA).",
+                    "enum": ["male", "female"],
+                    "default": "female",
+                    "fa_icon": "fas fa-venus-mars"
+                }
+            }
+        },
+        "sequoia_phylogeny_options": {
+            "title": "SEQUOIA phylogeny options",
+            "type": "object",
+            "fa_icon": "fas fa-code-branch",
+            "description": "Phylogeny tree building + variant placement parameters.",
+            "properties": {
+                "sequoia_phylogeny_mode": {
+                    "type": "string",
+                    "description": "Variant types to build phylogenies for.",
+                    "help_text": "Comma-separated subset of snv, indel, both — or 'all' to run all three.",
+                    "default": "snv,indel,both",
+                    "fa_icon": "fas fa-code-branch"
+                },
+                "sequoia_mpboot_bootstrap": {
+                    "type": "integer",
+                    "description": "MPBoot bootstrap replicates (must be >= 1000).",
+                    "help_text": "MPBoot hard-requires >= 1000 replicates; lower values silently fail to produce a tree.",
+                    "default": 1000,
+                    "fa_icon": "fas fa-random"
+                },
+                "sequoia_vaf_absent": {
+                    "type": "number", "default": 0.1, "fa_icon": "fas fa-sliders-h",
+                    "description": "VAF below which a genotype is called absent."
+                },
+                "sequoia_vaf_present": {
+                    "type": "number", "default": 0.3, "fa_icon": "fas fa-sliders-h",
+                    "description": "VAF at/above which a genotype is called present."
+                },
+                "sequoia_tree_mut_pval": {
+                    "type": "number", "default": 0.01, "hidden": true,
+                    "description": "Tree mutation placement p-value threshold."
+                },
+                "sequoia_keep_ancestral": {
+                    "type": "boolean", "default": false, "hidden": true,
+                    "description": "Keep ancestral nodes in the tree."
+                },
+                "sequoia_create_multi_tree": {
+                    "type": "boolean", "default": true, "hidden": true,
+                    "description": "Create multi-sample tree."
+                },
+                "sequoia_genotype_conv_prob": {
+                    "type": "boolean", "default": false, "hidden": true,
+                    "description": "Genotype conversion probability mode."
+                },
+                "sequoia_min_pval_for_true_somatic": {
+                    "type": "number", "default": 0.05, "hidden": true,
+                    "description": "Minimum p-value for a true somatic call."
+                },
+                "sequoia_min_variant_reads_shared": {
+                    "type": "integer", "default": 2, "hidden": true,
+                    "description": "Minimum variant reads for a shared variant."
+                },
+                "sequoia_min_vaf_shared": {
+                    "type": "number", "default": 2, "hidden": true,
+                    "description": "Minimum VAF for a shared variant."
+                },
+                "sequoia_mpboot_path": {
+                    "type": "string", "default": "/usr/local/bin/", "hidden": true,
+                    "description": "Path to the MPBoot binary inside the container."
+                },
+                "postprocess_heatmap_y_axis_text_size": {
+                    "type": "integer", "default": 5, "hidden": true,
+                    "description": "ggplot y-axis text size for the postprocess heatmaps."
+                },
+                "plot_tips": {
+                    "type": "boolean", "default": false, "hidden": true,
+                    "description": "Add a facet for variants placed on tip nodes."
+                }
+            }
+        },
+        "mutational_signature_options": {
+            "title": "Mutational signature options",
+            "type": "object",
+            "fa_icon": "fas fa-chart-bar",
+            "description": "COSMIC signature (SigProfilerAssignment) + multi-tool refitting parameters.",
+            "properties": {
+                "sig_genome_build": {
+                    "type": "string", "default": "GRCh38", "enum": ["GRCh38", "GRCm39"],
+                    "description": "Genome build for SigProfiler.", "fa_icon": "fas fa-dna"
+                },
+                "sig_context_type": {
+                    "type": "string", "default": "96", "hidden": true,
+                    "description": "SBS context type (e.g. 96)."
+                },
+                "sig_exome": {
+                    "type": "boolean", "default": false,
+                    "description": "Use exome normalization in SigProfilerMatrixGenerator.",
+                    "fa_icon": "fas fa-crop"
+                },
+                "sig_export_probabilities": {
+                    "type": "boolean", "default": true, "hidden": true,
+                    "description": "Export per-sample signature probabilities."
+                },
+                "sig_export_probabilities_per_mutation": {
+                    "type": "boolean", "default": true, "hidden": true,
+                    "description": "Export per-mutation signature probabilities."
+                },
+                "musical_enabled": {
+                    "type": "boolean", "default": true,
+                    "description": "Run MuSiCaL COSMIC SBS refitting.", "fa_icon": "fas fa-music"
+                },
+                "sigdyn_enabled": {
+                    "type": "boolean", "default": true,
+                    "description": "Run SigDyn strict best-subset fitting + dynamics.", "fa_icon": "fas fa-wave-square"
+                },
+                "musicatk_enabled": {
+                    "type": "boolean", "default": false,
+                    "description": "Run musicatk de novo NMF/LDA (requires R >= 4.4.0).", "fa_icon": "fas fa-cubes"
+                },
+                "musicatk_k_denovo": {
+                    "type": "integer", "default": 5, "hidden": true,
+                    "description": "Number of de novo signatures for musicatk."
+                }
+            }
+        }
+    },
+    "allOf": [
+        { "$ref": "#/definitions/input_output_options" },
+        { "$ref": "#/definitions/matrix_inputs" },
+        { "$ref": "#/definitions/cohort_options" },
+        { "$ref": "#/definitions/reference_genome_options" },
+        { "$ref": "#/definitions/sequoia_phylogeny_options" },
+        { "$ref": "#/definitions/mutational_signature_options" }
+    ]
+}
