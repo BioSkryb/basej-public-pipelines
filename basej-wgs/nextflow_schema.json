@@ -1,0 +1,311 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema",
+    "$id": "https://github.com/BioSkryb/nf-bioskryb-utils/pipelines/basej-wgs/nextflow_schema.json",
+    "title": "basej-wgs pipeline parameters",
+    "description": "Single-cell WGS/WES QC pipeline with alignment and metrics collection.",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+        "input_csv":                   { "$ref": "#/definitions/input_output_options/properties/input_csv" },
+        "workspace":                   { "$ref": "#/definitions/input_output_options/properties/workspace" },
+        "dataset_id":                  { "$ref": "#/definitions/input_output_options/properties/dataset_id" },
+        "workflow_id":                 { "$ref": "#/definitions/input_output_options/properties/workflow_id" },
+        "outputDir":                   { "$ref": "#/definitions/input_output_options/properties/outputDir" },
+        "timestamp":                   { "$ref": "#/definitions/input_output_options/properties/timestamp" },
+
+        "genome":                      { "$ref": "#/definitions/reference_genome_options/properties/genome" },
+        "reference":                   { "$ref": "#/definitions/reference_genome_options/properties/reference" },
+        "base_metrics_intervals":      { "$ref": "#/definitions/reference_genome_options/properties/base_metrics_intervals" },
+
+        "mode":                        { "$ref": "#/definitions/pipeline_mode_options/properties/mode" },
+        "exome_panel":                 { "$ref": "#/definitions/pipeline_mode_options/properties/exome_panel" },
+
+        "skip_subsampling":            { "$ref": "#/definitions/read_processing_options/properties/skip_subsampling" },
+        "max_total_reads":             { "$ref": "#/definitions/read_processing_options/properties/max_total_reads" },
+        "seqkit_sample_seed":          { "$ref": "#/definitions/read_processing_options/properties/seqkit_sample_seed" },
+        "samtools_seed":               { "$ref": "#/definitions/read_processing_options/properties/samtools_seed" },
+        "coverage_target":             { "$ref": "#/definitions/read_processing_options/properties/coverage_target" },
+
+        "platform":                    { "$ref": "#/definitions/sequencing_options/properties/platform" },
+        "architecture":                { "$ref": "#/definitions/sequencing_options/properties/architecture" },
+        "pipeline_tool":               { "$ref": "#/definitions/sequencing_options/properties/pipeline_tool" },
+
+        "pipeline_user":                { "$ref": "#/definitions/resource_label_options/properties/pipeline_user" },
+        "biosample_count":              { "$ref": "#/definitions/resource_label_options/properties/biosample_count" },
+        "basejumper_organization_uuid": { "$ref": "#/definitions/resource_label_options/properties/basejumper_organization_uuid" },
+        "basejumper_organization_name": { "$ref": "#/definitions/resource_label_options/properties/basejumper_organization_name" }
+    },
+    "definitions": {
+        "input_output_options": {
+            "title": "Input/output options",
+            "type": "object",
+            "fa_icon": "fas fa-terminal",
+            "description": "Define where the pipeline should find input data and save output data.",
+            "required": ["input_csv", "outputDir", "workspace", "dataset_id"],
+            "properties": {
+                "input_csv": {
+                    "type": "string",
+                    "format": "file-path",
+                    "mimetype": "text/csv",
+                    "pattern": "^\\S+\\.csv$",
+                    "description": "Path to comma-separated file containing information about the samples in the experiment.",
+                    "help_text": "You will need to create a design file with information about the samples in your experiment before running the pipeline. Use this parameter to specify its location. It must be a comma-separated file with at least 3 columns: biosampleName, read1, read2 (or biosampleName, cram for Ultima), and a header row. Optional column `custom_mean_coverage` (float) is required when `coverage_target` is set; it is used to compute the per-row subsample proportion.",
+                    "examples": [
+                        "s3://your-output-bucket/inputs/wgs_fastq_illumina_pe.csv"
+                    ],
+                    "fa_icon": "fas fa-file-csv"
+                },
+                "workspace": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Workspace identifier for S3 output layout and tagging.",
+                    "help_text": "Used in S3 output prefixes and applied as an S3 object tag. Required for standardized output organization.",
+                    "fa_icon": "fas fa-layer-group"
+                },
+                "dataset_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Dataset identifier for S3 tagging and organization.",
+                    "help_text": "Applied as an S3 object tag to associate outputs with a specific dataset.",
+                    "fa_icon": "fas fa-database"
+                },
+                "resume_workflow_id": {
+                    "type": "string",
+                    "description": "Original workflow_id to reuse when resuming a run, keeping output paths stable and idempotent.",
+                    "help_text": "Set this to the workflow_id of a previous run when resuming so outputs are written to the same S3 location and duplication is avoided. When unset, workflow_id is derived from TOWER_WORKFLOW_ID.",
+                    "fa_icon": "fas fa-redo",
+                    "hidden": true
+                },
+                "workflow_id": {
+                    "type": "string",
+                    "description": "Workflow run identifier. Auto-populated from TOWER_WORKFLOW_ID or Nextflow session ID.",
+                    "help_text": "Unique identifier for this workflow run. Used in S3 output paths and tags. Defaults to TOWER_WORKFLOW_ID environment variable if running on Seqera Platform, otherwise uses the Nextflow session ID.",
+                    "fa_icon": "fas fa-fingerprint",
+                    "hidden": true
+                },
+                "outputDir": {
+                    "type": "string",
+                    "format": "directory-path",
+                    "minLength": 1,
+                    "description": "Output directory for pipeline results. Use an s3:// URI for production runs; relative or absolute local paths are accepted for local/test runs.",
+                    "help_text": "Production launches should target an s3:// path (e.g., 's3://your-output-bucket/analysis/project_name/pipeline-basej-wgs'). Local nf-test runs may use a relative path like 'results'.",
+                    "examples": [
+                        "s3://your-output-bucket/analysis/test_project/pipeline-basej-wgs",
+                        "results"
+                    ],
+                    "fa_icon": "fas fa-folder-open"
+                },
+                "timestamp": {
+                    "type": "string",
+                    "description": "Timestamp suffix for execution reports.",
+                    "help_text": "Optional timestamp for naming execution reports. Format: 'yyMMdd_HHmmss'.",
+                    "fa_icon": "fas fa-clock",
+                    "hidden": true
+                }
+            }
+        },
+        "reference_genome_options": {
+            "title": "Reference genome options",
+            "type": "object",
+            "fa_icon": "fas fa-dna",
+            "description": "Define the reference genome and associated files for alignment.",
+            "required": ["genome"],
+            "properties": {
+                "genome": {
+                    "type": "string",
+                    "description": "Name of the reference genome to use for alignment.",
+                    "help_text": "Name of the reference genome. This will automatically configure the reference FASTA and associated files. Supported genomes: GRCh38, GRCh37, GRCm39, ARSUCD2.",
+                    "fa_icon": "fas fa-dna",
+                    "enum": ["GRCh38", "GRCh37", "GRCm39", "ARSUCD2"],
+                    "default": "GRCh38"
+                },
+                "reference": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "Path to reference genome FASTA directory. Auto-populated from genomes.config; override only if you know what you are doing.",
+                    "fa_icon": "fas fa-file-alt",
+                    "hidden": true
+                },
+                "base_metrics_intervals": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "Path to BED file with intervals for base metrics collection (WGS mode). Auto-populated from genomes.config.",
+                    "fa_icon": "fas fa-file-alt",
+                    "hidden": true
+                }
+            }
+        },
+        "pipeline_mode_options": {
+            "title": "Pipeline mode options",
+            "type": "object",
+            "fa_icon": "fas fa-sliders-h",
+            "description": "Options to control WGS vs WES mode.",
+            "required": ["mode"],
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "description": "Pipeline mode: 'wgs' for whole genome sequencing or 'exome' for whole exome sequencing.",
+                    "help_text": "Controls which metrics are collected and which intervals are used. WGS mode runs WgsMetricsAlgo on genome-wide intervals. Exome mode runs CoverageMetrics on target intervals and runs Picard CollectHsMetrics. When mode='exome', exome_panel is required.",
+                    "fa_icon": "fas fa-sliders-h",
+                    "enum": ["wgs", "exome"],
+                    "default": "wgs"
+                },
+                "exome_panel": {
+                    "type": "string",
+                    "description": "Exome panel identifier. Required when mode=exome; ignored when mode=wgs.",
+                    "help_text": "The exome panel key from genomes.config. Must match a panel defined under the chosen genome. For GRCh38: 'xGen Exome Hyb Panel v2', 'TruSight One', 'TWIST', 'Agilent Clinical Exome', 'Twist Exome 2.0', 'xGen Pan-Cancer Hybridization Panel', 'Twist Alliance CNTG Hereditary Oncology Panel'.",
+                    "fa_icon": "fas fa-layer-group",
+                    "enum": [
+                        "xGen Exome Hyb Panel v2",
+                        "TruSight One",
+                        "TWIST",
+                        "Agilent Clinical Exome",
+                        "Twist Exome 2.0",
+                        "xGen Pan-Cancer Hybridization Panel",
+                        "Twist Alliance CNTG Hereditary Oncology Panel"
+                    ],
+                    "default": "xGen Exome Hyb Panel v2"
+                }
+            }
+        },
+        "read_processing_options": {
+            "title": "Read processing options",
+            "type": "object",
+            "fa_icon": "fas fa-stream",
+            "description": "Options for optional read subsampling.",
+            "properties": {
+                "skip_subsampling": {
+                    "type": "boolean",
+                    "description": "Skip read subsampling and use all reads for alignment.",
+                    "help_text": "When true, all FASTQ reads are aligned without subsampling. When false (default), reads are counted (zcat + wc); if total reads across mates exceed max_total_reads, seqkit sample caps at that total; otherwise inputs pass through unchanged. Has no effect on the CRAM branch — use coverage_target for CRAM subsampling.",
+                    "fa_icon": "fas fa-random",
+                    "default": false,
+                    "hidden": true
+                },
+                "max_total_reads": {
+                    "type": "integer",
+                    "description": "Maximum total reads (sum of mates for paired-end) before subsampling applies.",
+                    "help_text": "When skip_subsampling=false, if total reads exceed this value, seqkit sample reduces to this many reads (same proportion per mate). No subsampling if total is at or below this value.",
+                    "fa_icon": "fas fa-random",
+                    "default": 1000000000,
+                    "minimum": 1,
+                    "hidden": true
+                },
+                "seqkit_sample_seed": {
+                    "type": "integer",
+                    "description": "Seed for reproducible seqkit subsampling.",
+                    "help_text": "Seed passed to seqkit sample -s. Use the same seed to reproduce identical subsamples.",
+                    "fa_icon": "fas fa-key",
+                    "default": 12345,
+                    "hidden": true
+                },
+                "samtools_seed": {
+                    "type": "integer",
+                    "description": "Seed for reproducible samtools CRAM subsampling.",
+                    "help_text": "Seed passed to samtools view -s for CRAM subsampling. Use the same seed to reproduce identical subsamples.",
+                    "fa_icon": "fas fa-key",
+                    "default": 12345,
+                    "hidden": true
+                },
+                "coverage_target": {
+                    "type": ["integer", "null"],
+                    "minimum": 1,
+                    "maximum": 200,
+                    "description": "Target coverage (x) for Ultima/CRAM subsampling. One target per pipeline run.",
+                    "help_text": "When set, every CRAM biosample is subsampled to this coverage and emitted as `{biosampleName}_cov{NN}x`. Requires a `custom_mean_coverage` column in input_csv per CRAM row. If a biosample's `custom_mean_coverage` is at or below `coverage_target` (cannot upsample), it is passed through at its native coverage and labeled with its actual floored coverage (e.g. a 9.6x sample becomes `{biosampleName}_cov09x`) so it is not pooled with true `coverage_target`-x samples downstream. Has no effect on the FASTQ branch — only effective when platform=Ultima with CRAM input. Run multiple coverage tiers as separate pipeline launches (e.g. 5x, 10x, 15x = 3 launches). Default: null (no subsampling).",
+                    "default": null,
+                    "examples": [5, 10, 15, 30],
+                    "x-cost-impact": "high",
+                    "x-applies-when": { "platform": "Ultima" },
+                    "x-agent-hint": "The parameter is named `coverage_target` (not `target_coverage`). Only effective for CRAM input on platform=Ultima."
+                }
+            }
+        },
+        "sequencing_options": {
+            "title": "Sequencing platform options",
+            "type": "object",
+            "fa_icon": "fas fa-microchip",
+            "description": "Options for sequencing platform configuration.",
+            "properties": {
+                "platform": {
+                    "type": "string",
+                    "description": "Sequencing platform used for the data.",
+                    "help_text": "The sequencing platform identifier. Used in the read group header of the output BAM file. Use 'Ultima' for CRAM input.",
+                    "fa_icon": "fas fa-microchip",
+                    "enum": ["Illumina", "Ultima", "Element"],
+                    "default": "Illumina"
+                },
+                "architecture": {
+                    "type": "string",
+                    "description": "Compute architecture for AWS Batch.",
+                    "help_text": "The CPU architecture for AWS Batch compute. Use 'arm' for ARM-based instances (Graviton, recommended) or 'x86' for Intel/AMD.",
+                    "fa_icon": "fas fa-server",
+                    "enum": ["arm", "x86"],
+                    "default": "arm",
+                    "hidden": true
+                },
+                "pipeline_tool": {
+                    "type": "string",
+                    "description": "Alignment/metrics tool stack to use.",
+                    "help_text": "Select the alignment and metrics tool stack. 'sentieon' uses the proprietary Sentieon tools (requires a valid Sentieon license). 'opensource' uses BWA-MEM2 + samtools markdup + Picard (no license required, x86-only).",
+                    "fa_icon": "fas fa-toolbox",
+                    "enum": ["sentieon", "opensource"],
+                    "default": "sentieon"
+                }
+            }
+        },
+        "resource_label_options": {
+            "title": "Resource labelling options",
+            "type": "object",
+            "fa_icon": "fas fa-tag",
+            "description": "Tags applied to AWS Batch jobs for cost tracking. Auto-populated by the launching platform; rarely set by users.",
+            "properties": {
+                "pipeline_user": {
+                    "type": "string",
+                    "description": "Human-readable user identifier applied as an AWS Batch resource label.",
+                    "fa_icon": "fas fa-user",
+                    "default": "basejumper",
+                    "hidden": true
+                },
+                "biosample_count": {
+                    "type": ["string", "integer"],
+                    "description": "Number of biosamples in the run; used as an AWS Batch resource label for cost tracking.",
+                    "fa_icon": "fas fa-hashtag",
+                    "default": "0",
+                    "hidden": true
+                },
+                "basejumper_organization_uuid": {
+                    "type": "string",
+                    "description": "BaseJumper organization UUID applied as an AWS Batch resource label.",
+                    "fa_icon": "fas fa-id-badge",
+                    "default": "",
+                    "hidden": true
+                },
+                "basejumper_organization_name": {
+                    "type": "string",
+                    "description": "BaseJumper organization name applied as an AWS Batch resource label.",
+                    "fa_icon": "fas fa-id-card",
+                    "default": "",
+                    "hidden": true
+                }
+            }
+        }
+    },
+    "allOf": [
+        { "$ref": "#/definitions/input_output_options" },
+        { "$ref": "#/definitions/reference_genome_options" },
+        { "$ref": "#/definitions/pipeline_mode_options" },
+        { "$ref": "#/definitions/read_processing_options" },
+        { "$ref": "#/definitions/sequencing_options" },
+        { "$ref": "#/definitions/resource_label_options" },
+        {
+            "if": {
+                "properties": { "mode": { "const": "exome" } },
+                "required": ["mode"]
+            },
+            "then": {
+                "required": ["exome_panel"]
+            }
+        }
+    ]
+}

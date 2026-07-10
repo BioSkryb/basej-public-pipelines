@@ -1,0 +1,3 @@
+biosampleName,cram
+HG001-UltimaWGS-ROME-Conv-Man_Z0022,s3://bioskryb-public-data/pipeline_resources/dev-resources/local_test_files/ultima_subsampled/HG001-UltimaWGS-ROME-Conv-Man_Z0022_500K.cram
+HG001-UltimaWGS-ROME-Conv-Man_Z0025,s3://bioskryb-public-data/pipeline_resources/dev-resources/local_test_files/ultima_subsampled/HG001-UltimaWGS-ROME-Conv-Man_Z0025_500K.cram

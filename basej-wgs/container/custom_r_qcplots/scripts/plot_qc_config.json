@@ -1,0 +1,15 @@
+{
+  "cutoff_preseq": 3500000000,
+  "cutoff_chimeras": 0.2,
+  "cutoff_chrM": 0.2,
+  "cutoff_cnv_mapd": 0.25,
+  "cutoff_cnv_sk": 0.25,
+  "size_labels_samples": 1,
+  "relative_size_cnv_plot": 1,
+  "relative_size_preseq_plot": 0.2,
+  "relative_size_mapd_plot": 0.2,
+  "relative_size_skew_plot": 0.2,
+  "relative_size_chrm_plot": 0.2,
+  "relative_size_chimeras_plot": 0.2,
+  "relative_size_bar_plot_group": 0.03
+}
