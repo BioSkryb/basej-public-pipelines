@@ -184,6 +184,7 @@ RUN ls -lh /usr/local/share/cosmic/
 COPY ./scripts /usr/local/bin
 
 RUN chmod +x /usr/local/bin/run_matrix_generator.py || true
+RUN chmod +x /usr/local/bin/mpboot-avx
 
 
 CMD ["/bin/bash"]
