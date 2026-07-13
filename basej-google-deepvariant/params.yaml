@@ -1,0 +1,20 @@
+# BASEJ-GOOGLE-DEEPVARIANT Test Parameters
+#
+# Default values used by `nextflow run` when no other params are passed.
+# Override on the CLI or with `-params-file <your.yaml>`.
+
+input_csv: ""
+genome: "GRCh38"
+mode: "wgs"
+platform: "Illumina"
+architecture: "arm"
+outputDir: "results"
+workspace: "demo"
+project: "test_project"
+
+# DeepVariant defaults
+deepvariant_version: "1.8.0"
+call_variants_batch_size: 1024
+
+# Emit a gVCF in addition to the VCF
+make_gvcf: false

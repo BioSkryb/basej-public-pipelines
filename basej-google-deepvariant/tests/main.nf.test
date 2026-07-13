@@ -1,0 +1,20 @@
+nextflow_pipeline {
+
+    name "Test basej-google-deepvariant pipeline parsing"
+    script "main.nf"
+
+    test("Pipeline fails when input_csv is not provided") {
+        when {
+            params {
+                input_csv = ""
+                outputDir = "results"
+                workspace = "test"
+                project   = "test"
+            }
+        }
+        then {
+            assert workflow.failed
+            assert workflow.errorReport.contains("--input_csv parameter is required")
+        }
+    }
+}

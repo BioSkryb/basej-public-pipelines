@@ -1,0 +1,2 @@
+# Empty placeholder used when --regions is not set (whole-genome calling).
+# DEEPVARIANT_MAKE_EXAMPLES_ONLY only references this path when params.mode == 'exome'.

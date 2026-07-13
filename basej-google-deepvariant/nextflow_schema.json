@@ -1,0 +1,317 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema",
+    "$id": "https://github.com/BioSkryb/nf-bioskryb-utils/pipelines/basej-google-deepvariant/nextflow_schema.json",
+    "title": "basej-google-deepvariant pipeline parameters",
+    "description": "SNV/indel calling from BAM/CRAM to VCF using Google DeepVariant with a BioSkryb custom-trained model that corrects PTA artifacts. Three-stage flow (make_examples / call_variants / postprocess_variants); runs after basej-wgs.",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+        "input_csv":              { "$ref": "#/definitions/input_output_options/properties/input_csv" },
+        "workspace":              { "$ref": "#/definitions/input_output_options/properties/workspace" },
+        "project":                { "$ref": "#/definitions/input_output_options/properties/project" },
+        "workflow_id":            { "$ref": "#/definitions/input_output_options/properties/workflow_id" },
+        "outputDir":              { "$ref": "#/definitions/input_output_options/properties/outputDir" },
+        "timestamp":              { "$ref": "#/definitions/input_output_options/properties/timestamp" },
+
+        "genome":                 { "$ref": "#/definitions/reference_genome_options/properties/genome" },
+        "reference":              { "$ref": "#/definitions/reference_genome_options/properties/reference" },
+        "deepvariant_model":      { "$ref": "#/definitions/reference_genome_options/properties/deepvariant_model" },
+        "population_vcfs":        { "$ref": "#/definitions/reference_genome_options/properties/population_vcfs" },
+        "checkpoint_filename":    { "$ref": "#/definitions/reference_genome_options/properties/checkpoint_filename" },
+        "regions":                { "$ref": "#/definitions/reference_genome_options/properties/regions" },
+
+        "platform":               { "$ref": "#/definitions/sequencing_options/properties/platform" },
+        "mode":                   { "$ref": "#/definitions/sequencing_options/properties/mode" },
+        "architecture":           { "$ref": "#/definitions/sequencing_options/properties/architecture" },
+
+        "deepvariant_version":      { "$ref": "#/definitions/deepvariant_options/properties/deepvariant_version" },
+        "call_variants_batch_size": { "$ref": "#/definitions/deepvariant_options/properties/call_variants_batch_size" },
+        "make_gvcf":                { "$ref": "#/definitions/deepvariant_options/properties/make_gvcf" },
+
+        "pipeline_user":                 { "$ref": "#/definitions/resource_label_options/properties/pipeline_user" },
+        "pipeline_name":                 { "$ref": "#/definitions/resource_label_options/properties/pipeline_name" },
+        "pipeline_biosample_count":      { "$ref": "#/definitions/resource_label_options/properties/pipeline_biosample_count" },
+        "basejumper_organization_uuid":  { "$ref": "#/definitions/resource_label_options/properties/basejumper_organization_uuid" },
+        "basejumper_organization_name":  { "$ref": "#/definitions/resource_label_options/properties/basejumper_organization_name" },
+        "basejumper_workspace_uuid":     { "$ref": "#/definitions/resource_label_options/properties/basejumper_workspace_uuid" },
+        "basejumper_workspace_name":     { "$ref": "#/definitions/resource_label_options/properties/basejumper_workspace_name" },
+        "basejumper_project_uuid":       { "$ref": "#/definitions/resource_label_options/properties/basejumper_project_uuid" },
+        "basejumper_project_name":       { "$ref": "#/definitions/resource_label_options/properties/basejumper_project_name" },
+        "basejumper_pipeline_uuid":      { "$ref": "#/definitions/resource_label_options/properties/basejumper_pipeline_uuid" }
+    },
+    "definitions": {
+        "input_output_options": {
+            "title": "Input/output options",
+            "type": "object",
+            "fa_icon": "fas fa-terminal",
+            "description": "Define where the pipeline should find input data and save output data.",
+            "required": ["input_csv", "outputDir", "workspace", "project"],
+            "properties": {
+                "input_csv": {
+                    "type": "string",
+                    "format": "file-path",
+                    "mimetype": "text/csv",
+                    "pattern": "^\\S+\\.csv$",
+                    "description": "Path to comma-separated file containing per-biosample BAM or CRAM rows.",
+                    "help_text": "Headered CSV with one row per biosample. Required column: biosampleName. Provide either bam (and optional bai) or cram (and optional crai). Indexes are auto-derived from the alignment path when omitted. Typically the output of basej-wgs.",
+                    "examples": [
+                        "s3://your-output-bucket/inputs/dv_bam_grch38.csv"
+                    ],
+                    "fa_icon": "fas fa-file-csv"
+                },
+                "workspace": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Workspace identifier for S3 output layout and tagging.",
+                    "fa_icon": "fas fa-layer-group"
+                },
+                "project": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Project identifier for S3 tagging and organization.",
+                    "fa_icon": "fas fa-project-diagram"
+                },
+                "resume_workflow_id": {
+                    "type": "string",
+                    "description": "Original workflow_id to reuse when resuming a run, keeping output paths stable and idempotent.",
+                    "help_text": "Set this to the workflow_id of a previous run when resuming so outputs are written to the same S3 location and duplication is avoided. When unset, workflow_id is derived from TOWER_WORKFLOW_ID.",
+                    "fa_icon": "fas fa-redo",
+                    "hidden": true
+                },
+                "workflow_id": {
+                    "type": "string",
+                    "description": "Workflow run identifier (auto-populated from TOWER_WORKFLOW_ID).",
+                    "fa_icon": "fas fa-fingerprint",
+                    "hidden": true
+                },
+                "outputDir": {
+                    "type": "string",
+                    "format": "directory-path",
+                    "minLength": 1,
+                    "description": "Output directory for pipeline results. Use an s3:// URI for production runs; relative or absolute local paths are accepted for local/test runs.",
+                    "examples": [
+                        "s3://your-output-bucket/analysis/test_project/pipeline-basej-google-deepvariant",
+                        "results"
+                    ],
+                    "fa_icon": "fas fa-folder-open"
+                },
+                "timestamp": {
+                    "type": "string",
+                    "description": "Timestamp suffix for execution reports (auto-populated).",
+                    "fa_icon": "fas fa-clock",
+                    "hidden": true
+                }
+            }
+        },
+        "reference_genome_options": {
+            "title": "Reference genome options",
+            "type": "object",
+            "fa_icon": "fas fa-dna",
+            "description": "Define the reference genome and DeepVariant model resources.",
+            "required": ["genome"],
+            "properties": {
+                "genome": {
+                    "type": "string",
+                    "description": "Name of the reference genome to use for variant calling.",
+                    "fa_icon": "fas fa-dna",
+                    "enum": ["GRCh38"],
+                    "default": "GRCh38"
+                },
+                "reference": {
+                    "type": "string",
+                    "format": "directory-path",
+                    "description": "Directory containing reference FASTA (genome.fa) and .fai index. Auto-resolved from genome.",
+                    "fa_icon": "fas fa-file-alt",
+                    "hidden": true
+                },
+                "deepvariant_model": {
+                    "type": "string",
+                    "format": "directory-path",
+                    "description": "Directory containing the DeepVariant checkpoint files. Defaults to the BioSkryb-trained model from genomes.config.",
+                    "fa_icon": "fas fa-brain",
+                    "hidden": true
+                },
+                "population_vcfs": {
+                    "type": "string",
+                    "format": "directory-path",
+                    "description": "Directory of per-chromosome population VCFs used by make_examples.",
+                    "fa_icon": "fas fa-folder",
+                    "hidden": true
+                },
+                "checkpoint_filename": {
+                    "type": "string",
+                    "description": "Filename of the .ckpt within --deepvariant_model.",
+                    "default": "sc_af.model.ckpt",
+                    "fa_icon": "fas fa-file",
+                    "hidden": true
+                },
+                "regions": {
+                    "type": "string",
+                    "format": "file-path",
+                    "description": "BED file of calling regions. Required when mode='exome'; ignored otherwise.",
+                    "help_text": "Used as --regions for DeepVariant make_examples. Restricts calling to target intervals (e.g. an exome panel BED). Must be set whenever mode='exome'.",
+                    "examples": [
+                        "s3://bioskryb-shared-data/genomes/Homo_sapiens/NCBI/GRCh38/Annotation/Intervals/Exome_panels/IDT/IDT.Exomev2.targets.hg38.bed"
+                    ],
+                    "fa_icon": "fas fa-map"
+                }
+            }
+        },
+        "sequencing_options": {
+            "title": "Sequencing platform options",
+            "type": "object",
+            "fa_icon": "fas fa-microchip",
+            "description": "Sequencing platform and compute architecture configuration.",
+            "properties": {
+                "platform": {
+                    "type": "string",
+                    "description": "Sequencing platform (informational; same DeepVariant call path).",
+                    "fa_icon": "fas fa-microchip",
+                    "enum": ["Illumina", "Ultima", "Element"],
+                    "default": "Illumina",
+                    "hidden": true
+                },
+                "mode": {
+                    "type": "string",
+                    "description": "Calling mode: 'wgs' for whole genome or 'exome' for targeted/exome regions.",
+                    "help_text": "Controls --regions handling and resource ceilings. 'exome' enables --regions and uses smaller compute (cpus/memory/time). When mode='exome', regions is required.",
+                    "fa_icon": "fas fa-bullseye",
+                    "enum": ["wgs", "exome"],
+                    "default": "wgs"
+                },
+                "architecture": {
+                    "type": "string",
+                    "description": "Compute architecture for AWS Batch (affects CRAM_TO_BAM samtools image).",
+                    "fa_icon": "fas fa-server",
+                    "enum": ["arm", "x86"],
+                    "default": "arm"
+                }
+            }
+        },
+        "deepvariant_options": {
+            "title": "DeepVariant options",
+            "type": "object",
+            "fa_icon": "fas fa-cogs",
+            "description": "Tunables for the DeepVariant make_examples / call_variants / postprocess flow.",
+            "properties": {
+                "deepvariant_version": {
+                    "type": "string",
+                    "description": "DeepVariant container image tag.",
+                    "default": "1.8.0",
+                    "fa_icon": "fas fa-tag",
+                    "hidden": true
+                },
+                "call_variants_batch_size": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 8192,
+                    "description": "Batch size passed to call_variants.",
+                    "default": 1024,
+                    "fa_icon": "fas fa-layer-group",
+                    "hidden": true
+                },
+                "make_gvcf": {
+                    "type": "boolean",
+                    "description": "Emit a gVCF in addition to the VCF (DeepVariant --gvcf / --gvcf_outfile).",
+                    "help_text": "When true, make_examples also writes non-variant-site (gVCF) tfrecords and postprocess_variants assembles a per-biosample <sample>_deepvariant.g.vcf.gz (+ .tbi) alongside the standard VCF.",
+                    "default": false,
+                    "fa_icon": "fas fa-file-medical-alt"
+                }
+            }
+        },
+        "resource_label_options": {
+            "title": "Resource labelling options",
+            "type": "object",
+            "fa_icon": "fas fa-tag",
+            "description": "Tags applied to AWS Batch jobs for cost tracking. Auto-populated by the launching platform; rarely set by users.",
+            "properties": {
+                "pipeline_user": {
+                    "type": "string",
+                    "description": "Human-readable user identifier applied as an AWS Batch resource label.",
+                    "fa_icon": "fas fa-user",
+                    "default": "basejumper",
+                    "hidden": true
+                },
+                "pipeline_name": {
+                    "type": "string",
+                    "description": "Pipeline name applied as an AWS Batch resource label.",
+                    "fa_icon": "fas fa-stream",
+                    "default": "basej-google-deepvariant",
+                    "hidden": true
+                },
+                "pipeline_biosample_count": {
+                    "type": ["string", "integer"],
+                    "description": "Number of biosamples in the run; used as an AWS Batch resource label for cost tracking.",
+                    "fa_icon": "fas fa-hashtag",
+                    "default": "0",
+                    "hidden": true
+                },
+                "basejumper_organization_uuid": {
+                    "type": "string",
+                    "description": "BaseJumper organization UUID applied as an AWS Batch resource label.",
+                    "fa_icon": "fas fa-id-badge",
+                    "default": "",
+                    "hidden": true
+                },
+                "basejumper_organization_name": {
+                    "type": "string",
+                    "description": "BaseJumper organization name applied as an AWS Batch resource label.",
+                    "fa_icon": "fas fa-id-card",
+                    "default": "",
+                    "hidden": true
+                },
+                "basejumper_workspace_uuid": {
+                    "type": "string",
+                    "description": "BaseJumper workspace UUID applied as an AWS Batch resource label.",
+                    "fa_icon": "fas fa-id-badge",
+                    "default": "",
+                    "hidden": true
+                },
+                "basejumper_workspace_name": {
+                    "type": "string",
+                    "description": "BaseJumper workspace name applied as an AWS Batch resource label.",
+                    "fa_icon": "fas fa-id-card",
+                    "default": "",
+                    "hidden": true
+                },
+                "basejumper_project_uuid": {
+                    "type": "string",
+                    "description": "BaseJumper project UUID applied as an AWS Batch resource label.",
+                    "fa_icon": "fas fa-id-badge",
+                    "default": "",
+                    "hidden": true
+                },
+                "basejumper_project_name": {
+                    "type": "string",
+                    "description": "BaseJumper project name applied as an AWS Batch resource label.",
+                    "fa_icon": "fas fa-id-card",
+                    "default": "",
+                    "hidden": true
+                },
+                "basejumper_pipeline_uuid": {
+                    "type": "string",
+                    "description": "BaseJumper pipeline UUID applied as an AWS Batch resource label.",
+                    "fa_icon": "fas fa-id-badge",
+                    "default": "",
+                    "hidden": true
+                }
+            }
+        }
+    },
+    "allOf": [
+        { "$ref": "#/definitions/input_output_options" },
+        { "$ref": "#/definitions/reference_genome_options" },
+        { "$ref": "#/definitions/sequencing_options" },
+        { "$ref": "#/definitions/deepvariant_options" },
+        { "$ref": "#/definitions/resource_label_options" },
+        {
+            "if": {
+                "properties": { "mode": { "const": "exome" } },
+                "required": ["mode"]
+            },
+            "then": {
+                "required": ["regions"]
+            }
+        }
+    ]
+}
