@@ -1,0 +1,2 @@
+biosampleName,bam
+ResolveOMEv2.0-384-WGS-B4,s3://bioskryb-public-data/pipeline_resources/dev-resources/local_test_files/wgs_test/ResolveOMEv2.0-384-WGS-B4.bam

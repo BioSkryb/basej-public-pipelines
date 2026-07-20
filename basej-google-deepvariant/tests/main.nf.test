@@ -1,7 +1,57 @@
 nextflow_pipeline {
 
-    name "Test basej-google-deepvariant pipeline parsing"
+    name "Test basej-google-deepvariant pipeline"
     script "main.nf"
+
+    test("deepvariant_GRCh38_wgs_test") {
+        tag "GRCh38"
+        when {
+            params {
+                outputDir    = "${outputDir}"
+                workspace    = "demo"
+                workflow_id  = "test_dv_GRCh38"
+                input_csv    = "$baseDir/tests/data/inputs/nftest_input.csv"
+                max_memory   = "24.GB"
+                max_cpus     = "8"
+                architecture = "x86"
+                genome       = "GRCh38"
+                mode         = "wgs"
+            }
+        }
+
+        then {
+            assertAll(
+
+                { assert workflow.success },
+
+                // VCF output
+                {
+                    def vcfDir = "${outputDir}/vcf/demo/dna/tool=deepvariant-1.8.0"
+                    assert path("${vcfDir}/ResolveOMEv2.0-384-WGS-B4_deepvariant.vcf.gz").exists()
+                    assert path("${vcfDir}/ResolveOMEv2.0-384-WGS-B4_deepvariant.vcf.gz.tbi").exists()
+                },
+
+                // Bcftools stats
+                {
+                    def statsFile = path("${outputDir}/workflow_outputs/demo/test_dv_GRCh38/metrics/bcftools_stats/ResolveOMEv2.0-384-WGS-B4.bcftools.stats.txt")
+                    assert statsFile.exists()
+
+                    // Verify variants were called (at low coverage DV still calls many)
+                    def lines = statsFile.readLines()
+                    def snpLine = lines.find { it.startsWith('SN') && it.contains('number of SNPs:') }
+                    assert snpLine != null : "No SNP count line in bcftools stats"
+                    def snpCount = snpLine.split('\t').last().trim().toInteger()
+                    assert snpCount > 0 : "Expected SNPs to be called, got 0"
+                },
+
+                // MultiQC report
+                { assert path("${outputDir}/workflow_outputs/demo/test_dv_GRCh38/reports/multiqc_report.html").exists() },
+
+                // Index CSVs
+                { assert path("${outputDir}/workflow_outputs/demo/test_dv_GRCh38/index/vcf.csv").exists() }
+            )
+        }
+    }
 
     test("Pipeline fails when input_csv is not provided") {
         when {
@@ -9,7 +59,6 @@ nextflow_pipeline {
                 input_csv = ""
                 outputDir = "results"
                 workspace = "test"
-                project   = "test"
             }
         }
         then {
@@ -17,4 +66,5 @@ nextflow_pipeline {
             assert workflow.errorReport.contains("--input_csv parameter is required")
         }
     }
+
 }
