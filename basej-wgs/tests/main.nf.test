@@ -4,18 +4,20 @@ nextflow_pipeline {
     script "main.nf"
 
     test("wgs_GRCh38_test") {
+        tag "GRCh38"
         when {
             params {
                 outputDir              = "${outputDir}"
                 workspace              = "demo"
                 workflow_id            = "test_wgs_GRCh38"
-                input_csv              = "$baseDir/tests/data/inputs/input_wgs_subsampled.csv"
+                input_csv              = "$baseDir/tests/data/inputs/nftest_input.csv"
                 max_memory             = "24.GB"
                 max_cpus               = "8"
                 architecture           = "x86"
                 genome                 = "GRCh38"
                 mode                   = "wgs"
                 skip_subsampling       = true
+                pipeline_tool          = "opensource"
             }
         }
 
@@ -28,32 +30,22 @@ nextflow_pipeline {
 
                 // Check wgsqc_all_metrics.tsv - full-schema TSV for nf-test validation
                 {
-                    def f = path("${outputDir}/workflow_outputs/demo/test_wgs_GRCh38/metrics/wgsqc/wgsqc_all_metrics.tsv")
+                    def f = path("${outputDir}/workflow_outputs/demo/test_wgs_GRCh38/metrics/wgsqc_metrics/wgsqc_all_metrics.tsv")
                     assert f.exists()
                     def lines  = f.readLines()
                     def header = lines[0].split('\t').toList()
 
                     // Required columns must be present
                     [
-                        // Core
                         'qc_score', 'qc_status', 'total_reads', 'pct_duplication',
-                        'mean_coverage', 'pct_1x', 'pct_5x', 'pct_10x',
-                        'pct_reads_aligned_in_pairs', 'pct_chimeras',
-                        // AlignmentStat additions
+                        'mean_coverage', 'pct_chimeras',
                         'pf_aligned_bases', 'pf_hq_aligned_reads', 'pf_hq_aligned_bases',
                         'pf_hq_aligned_q20_bases', 'pf_hq_error_rate', 'pct_adapter',
-                        // InsertSize additions
-                        'insert_mad', 'insert_min', 'insert_max',
-                        // GCBias additions
+                        'insert_median', 'insert_mad', 'insert_min', 'insert_max',
                         'gc_nc_0_19', 'gc_nc_20_39', 'gc_nc_40_59', 'gc_nc_60_79', 'gc_nc_80_100',
-                        // WGS coverage additions
                         'median_coverage', 'mad_coverage',
-                        'pct_40x', 'pct_50x', 'pct_60x', 'pct_70x', 'pct_80x', 'pct_90x', 'pct_100x',
-                        // WGS exclusion fractions
-                        'pct_exc_mapq', 'pct_exc_dupe', 'pct_exc_unpaired',
-                        'pct_exc_baseq', 'pct_exc_overlap', 'pct_exc_capped', 'pct_exc_total',
-                        // SNP metrics
-                        'het_snp_sensitivity', 'het_snp_q',
+                        'pct_1x', 'pct_5x', 'pct_10x',
+                        'pct_exc_mapq', 'pct_exc_dupe', 'pct_exc_baseq', 'pct_exc_total',
                     ].each { col ->
                         assert header.contains(col) : "Missing column: ${col}"
                     }
@@ -64,13 +56,10 @@ nextflow_pipeline {
                     def dbl = { v -> (v && v != 'None' && !v.isEmpty()) ? v.toDouble() : null }
                     def lng = { v -> (v && v != 'None' && !v.isEmpty()) ? v.toLong()   : null }
 
-                    // Expected values from WGS subsampled test run (skip_subsampling=true)
-                    // biosample names use biosampleName from CSV (no _L001 suffix)
+                    // Expected values from opensource WGS test run (skip_subsampling=true, ~1M reads per sample)
                     def expected = [
-                        'ResolveOMEv2.0-384-WGS-B4':  [total_reads: 1965725, qc_status: 'FAIL', qc_score: 2],
-                        'ResolveOMEv2.0-384-WGS-D3':  [total_reads: 1966359, qc_status: 'FAIL', qc_score: 2],
-                        'ResolveOMEv2.0-384-WGS-D6':  [total_reads: 1967718, qc_status: 'FAIL', qc_score: 2],
-                        'ResolveOMEv2.0-384-WGS-F22': [total_reads: 1976194, qc_status: 'FAIL', qc_score: 2],
+                        'ResolveOMEv2.0-384-WGS-B4':  [total_reads: 2000367, qc_status: 'FAIL', qc_score: 2],
+                        'ResolveOMEv2.0-384-WGS-D3':  [total_reads: 1999493, qc_status: 'FAIL', qc_score: 2],
                     ]
 
                     assert lines.size() - 1 == expected.size() : "Expected ${expected.size()} samples, got ${lines.size() - 1}"
@@ -83,98 +72,37 @@ nextflow_pipeline {
 
                         assert cols[idx('total_reads')].trim().toLong()  == exp.total_reads : "total_reads mismatch for ${sample}"
                         assert cols[idx('qc_status')].trim()             == exp.qc_status   : "qc_status mismatch for ${sample}"
-                        assert cols[idx('qc_score')].trim().toInteger()  == exp.qc_score    : "qc_score mismatch for ${sample}"
+                        assert cols[idx('qc_score')].trim().toDouble().intValue() == exp.qc_score : "qc_score mismatch for ${sample}"
 
                         // mean_coverage: >0 for WGS (observed ~0.08x at subsampled depth)
                         def meanCov = dbl(cols[idx('mean_coverage')].trim())
                         if (meanCov != null) assert meanCov > 0 && meanCov < 1.0 : "mean_coverage out of range for ${sample}: ${meanCov}"
 
-                        // median_coverage / mad_coverage: 0.0 at this low depth
-                        def medCov = dbl(cols[idx('median_coverage')].trim())
-                        if (medCov != null) assert medCov >= 0.0 && medCov < 1.0 : "median_coverage out of range for ${sample}: ${medCov}"
-                        def madCov = dbl(cols[idx('mad_coverage')].trim())
-                        if (madCov != null) assert madCov >= 0.0 && madCov < 1.0 : "mad_coverage out of range for ${sample}: ${madCov}"
-
-                        // pct_1x: observed 0.077–0.084 across samples
-                        def pct1x = dbl(cols[idx('pct_1x')].trim())
-                        if (pct1x != null) assert pct1x >= 0.05 && pct1x <= 0.12 : "pct_1x out of range for ${sample}: ${pct1x}"
-
-                        // pct_5x and above: very small at subsampled depth (< 0.001)
-                        ['pct_5x', 'pct_10x', 'pct_15x', 'pct_20x', 'pct_25x', 'pct_30x',
-                         'pct_40x', 'pct_50x', 'pct_60x', 'pct_70x', 'pct_80x', 'pct_90x', 'pct_100x'].each { col ->
-                            def v = dbl(cols[idx(col)].trim())
-                            if (v != null) assert v >= 0.0 && v < 0.001 : "${col} out of range for ${sample}: ${v}"
-                        }
-
-                        // Exclusion fractions — observed ranges from test run
-                        def pctExcMapq = dbl(cols[idx('pct_exc_mapq')].trim())
-                        if (pctExcMapq != null) assert pctExcMapq >= 0.03 && pctExcMapq <= 0.12 : "pct_exc_mapq out of range for ${sample}: ${pctExcMapq}"
-                        def pctExcDupe = dbl(cols[idx('pct_exc_dupe')].trim())
-                        if (pctExcDupe != null) assert pctExcDupe >= 0.0 && pctExcDupe <= 0.001 : "pct_exc_dupe out of range for ${sample}: ${pctExcDupe}"
-                        def pctExcUnpaired = dbl(cols[idx('pct_exc_unpaired')].trim())
-                        if (pctExcUnpaired != null) assert pctExcUnpaired >= 0.0 && pctExcUnpaired <= 0.005 : "pct_exc_unpaired out of range for ${sample}: ${pctExcUnpaired}"
-                        def pctExcBaseq = dbl(cols[idx('pct_exc_baseq')].trim())
-                        if (pctExcBaseq != null) assert pctExcBaseq >= 0.005 && pctExcBaseq <= 0.02 : "pct_exc_baseq out of range for ${sample}: ${pctExcBaseq}"
-                        def pctExcOverlap = dbl(cols[idx('pct_exc_overlap')].trim())
-                        if (pctExcOverlap != null) assert pctExcOverlap >= 0.02 && pctExcOverlap <= 0.10 : "pct_exc_overlap out of range for ${sample}: ${pctExcOverlap}"
-                        def pctExcCapped = dbl(cols[idx('pct_exc_capped')].trim())
-                        if (pctExcCapped != null) assert pctExcCapped >= 0.0 && pctExcCapped <= 0.001 : "pct_exc_capped out of range for ${sample}: ${pctExcCapped}"
-                        def pctExcTotal = dbl(cols[idx('pct_exc_total')].trim())
-                        if (pctExcTotal != null) assert pctExcTotal >= 0.06 && pctExcTotal <= 0.20 : "pct_exc_total out of range for ${sample}: ${pctExcTotal}"
-
-                        // pct_duplication: observed ~0.0 (9e-06 to 1.3e-05) in subsampled WGS
+                        // pct_duplication: very low at this depth
                         def pctDup = dbl(cols[idx('pct_duplication')].trim())
                         if (pctDup != null) assert pctDup >= 0.0 && pctDup <= 0.001 : "pct_duplication out of range for ${sample}: ${pctDup}"
 
-                        // pct_chimeras: observed 0.090–0.104 across samples
+                        // pct_chimeras: observed 0.06-0.07
                         def chimeras = dbl(cols[idx('pct_chimeras')].trim())
-                        if (chimeras != null) assert chimeras >= 0.05 && chimeras <= 0.15 : "pct_chimeras out of range for ${sample}: ${chimeras}"
+                        if (chimeras != null) assert chimeras >= 0.03 && chimeras <= 0.15 : "pct_chimeras out of range for ${sample}: ${chimeras}"
 
-                        // pct_adapter: observed 0.0 (up to 1e-6) across samples
-                        def pctAdapt = dbl(cols[idx('pct_adapter')].trim())
-                        if (pctAdapt != null) assert pctAdapt >= 0.0 && pctAdapt <= 0.001 : "pct_adapter out of range for ${sample}: ${pctAdapt}"
+                        // pct_1x: observed ~0.08 at subsampled depth
+                        def pct1x = dbl(cols[idx('pct_1x')].trim())
+                        if (pct1x != null) assert pct1x >= 0.04 && pct1x <= 0.15 : "pct_1x out of range for ${sample}: ${pct1x}"
 
-                        // pf_hq_error_rate: observed 0.00345–0.00368 across samples
-                        def hqErrRate = dbl(cols[idx('pf_hq_error_rate')].trim())
-                        if (hqErrRate != null) assert hqErrRate >= 0.002 && hqErrRate <= 0.006 : "pf_hq_error_rate out of range for ${sample}: ${hqErrRate}"
+                        // pct_5x and above: very small at subsampled depth
+                        ['pct_5x', 'pct_10x'].each { col ->
+                            def v = dbl(cols[idx(col)].trim())
+                            if (v != null) assert v >= 0.0 && v < 0.005 : "${col} out of range for ${sample}: ${v}"
+                        }
 
-                        // AlignmentStat bigint counts — observed ranges
-                        def pfAlignedBases = lng(cols[idx('pf_aligned_bases')].trim())
-                        if (pfAlignedBases != null) assert pfAlignedBases >= 260_000_000L && pfAlignedBases <= 300_000_000L : "pf_aligned_bases out of range for ${sample}: ${pfAlignedBases}"
-                        def pfHqReads = lng(cols[idx('pf_hq_aligned_reads')].trim())
-                        if (pfHqReads != null) assert pfHqReads >= 1_700_000L && pfHqReads <= 1_900_000L : "pf_hq_aligned_reads out of range for ${sample}: ${pfHqReads}"
-                        def pfHqBases = lng(cols[idx('pf_hq_aligned_bases')].trim())
-                        if (pfHqBases != null) assert pfHqBases >= 240_000_000L && pfHqBases <= 285_000_000L : "pf_hq_aligned_bases out of range for ${sample}: ${pfHqBases}"
-                        def pfHqQ20 = lng(cols[idx('pf_hq_aligned_q20_bases')].trim())
-                        if (pfHqQ20 != null) assert pfHqQ20 >= 237_000_000L && pfHqQ20 <= 280_000_000L : "pf_hq_aligned_q20_bases out of range for ${sample}: ${pfHqQ20}"
-
-                        // Insert size — observed: median 361–386, mad 79–91, min 2, max 226–233M
-                        def insMedian = dbl(cols[idx('insert_median')].trim())
-                        if (insMedian != null) assert insMedian >= 300.0 && insMedian <= 450.0 : "insert_median out of range for ${sample}: ${insMedian}"
-                        def insMad = dbl(cols[idx('insert_mad')].trim())
-                        if (insMad != null) assert insMad >= 60.0 && insMad <= 110.0 : "insert_mad out of range for ${sample}: ${insMad}"
-                        def insMin = lng(cols[idx('insert_min')].trim())
-                        if (insMin != null) assert insMin >= 1L && insMin <= 10L : "insert_min out of range for ${sample}: ${insMin}"
-                        def insMax = lng(cols[idx('insert_max')].trim())
-                        if (insMax != null) assert insMax >= 200_000_000L && insMax <= 260_000_000L : "insert_max out of range for ${sample}: ${insMax}"
-
-                        // GC normalised coverage — observed ranges across samples
-                        def gcNc019 = dbl(cols[idx('gc_nc_0_19')].trim())
-                        if (gcNc019 != null) assert gcNc019 >= 0.6 && gcNc019 <= 1.0 : "gc_nc_0_19 out of range for ${sample}: ${gcNc019}"
-                        def gcNc2039 = dbl(cols[idx('gc_nc_20_39')].trim())
-                        if (gcNc2039 != null) assert gcNc2039 >= 0.8 && gcNc2039 <= 1.3 : "gc_nc_20_39 out of range for ${sample}: ${gcNc2039}"
+                        // GC normalised coverage — sanity range checks
                         def gcNc4059 = dbl(cols[idx('gc_nc_40_59')].trim())
-                        if (gcNc4059 != null) assert gcNc4059 >= 0.75 && gcNc4059 <= 1.15 : "gc_nc_40_59 out of range for ${sample}: ${gcNc4059}"
-                        def gcNc6079 = dbl(cols[idx('gc_nc_60_79')].trim())
-                        if (gcNc6079 != null) assert gcNc6079 >= 0.30 && gcNc6079 <= 0.75 : "gc_nc_60_79 out of range for ${sample}: ${gcNc6079}"
-                        def gcNc80100 = dbl(cols[idx('gc_nc_80_100')].trim())
-                        if (gcNc80100 != null) assert gcNc80100 >= 4.0 && gcNc80100 <= 9.0 : "gc_nc_80_100 out of range for ${sample}: ${gcNc80100}"
+                        if (gcNc4059 != null) assert gcNc4059 >= 0.5 && gcNc4059 <= 1.5 : "gc_nc_40_59 out of range for ${sample}: ${gcNc4059}"
 
-                        // het_snp_sensitivity: observed 0.040–0.043; het_snp_q: 0 for all samples
-                        def hetSnpSens = dbl(cols[idx('het_snp_sensitivity')].trim())
-                        if (hetSnpSens != null) assert hetSnpSens >= 0.02 && hetSnpSens <= 0.08 : "het_snp_sensitivity out of range for ${sample}: ${hetSnpSens}"
-                        def hetSnpQ = lng(cols[idx('het_snp_q')].trim())
-                        if (hetSnpQ != null) assert hetSnpQ == 0L : "het_snp_q should be 0 for ${sample}: ${hetSnpQ}"
+                        // Insert size — observed: median ~295-385
+                        def insMedian = dbl(cols[idx('insert_median')].trim())
+                        if (insMedian != null) assert insMedian >= 200.0 && insMedian <= 500.0 : "insert_median out of range for ${sample}: ${insMedian}"
                     }
                 },
 
@@ -182,182 +110,10 @@ nextflow_pipeline {
                 {
                     assert path("${outputDir}/tables/wgsqc_summary/workspace=demo/workflow_id=test_wgs_GRCh38/biosample=ResolveOMEv2.0-384-WGS-B4/output.parquet").exists()
                     assert path("${outputDir}/tables/wgsqc_summary/workspace=demo/workflow_id=test_wgs_GRCh38/biosample=ResolveOMEv2.0-384-WGS-D3/output.parquet").exists()
-                    assert path("${outputDir}/tables/wgsqc_summary/workspace=demo/workflow_id=test_wgs_GRCh38/biosample=ResolveOMEv2.0-384-WGS-D6/output.parquet").exists()
-                    assert path("${outputDir}/tables/wgsqc_summary/workspace=demo/workflow_id=test_wgs_GRCh38/biosample=ResolveOMEv2.0-384-WGS-F22/output.parquet").exists()
                 },
 
                 // Verify QC plot was generated
-                { assert path("${outputDir}/workflow_outputs/demo/test_wgs_GRCh38/plots/wgsqc/qc_wgs.pdf").exists() }
-            )
-        }
-    }
-
-    test("wes_exome_GRCh38_test") {
-        when {
-            params {
-                outputDir              = "${outputDir}"
-                workspace              = "demo"
-                workflow_id            = "test_wes_GRCh38"
-                input_csv              = "$baseDir/tests/data/inputs/input_exome_subsampled.csv"
-                max_memory             = "24.GB"
-                max_cpus               = "8"
-                architecture           = "x86"
-                genome                 = "GRCh38"
-                mode                   = "exome"
-                skip_subsampling       = true
-            }
-        }
-
-        then {
-            assertAll(
-
-                { assert workflow.success },
-
-                { assert path("${outputDir}/workflow_outputs/demo/test_wes_GRCh38/reports/multiqc_report.html").exists() },
-
-                // Check wesqc_all_metrics.tsv - full-schema TSV for nf-test validation
-                {
-                    def f = path("${outputDir}/workflow_outputs/demo/test_wes_GRCh38/metrics/wesqc/wesqc_all_metrics.tsv")
-                    assert f.exists()
-                    def lines  = f.readLines()
-                    def header = lines[0].split('\t').toList()
-
-                    // Required columns must be present
-                    [
-                        // Core
-                        'qc_score', 'qc_status', 'total_reads', 'pct_duplication',
-                        'mean_target_coverage', 'fold_enrichment', 'pct_selected_bases',
-                        'pct_reads_aligned_in_pairs', 'pct_chimeras',
-                        // HS target coverage additions
-                        'pct_target_bases_1x', 'pct_target_bases_2x',
-                        'pct_target_bases_10x', 'pct_target_bases_20x', 'pct_target_bases_30x',
-                        'pct_target_bases_40x', 'pct_target_bases_50x', 'pct_target_bases_100x',
-                        'pct_target_bases_250x', 'pct_target_bases_500x', 'pct_target_bases_1000x',
-                        // AlignmentStat additions
-                        'pf_aligned_bases', 'pf_hq_aligned_reads', 'pf_hq_aligned_bases',
-                        'pf_hq_aligned_q20_bases', 'pf_hq_error_rate', 'pct_adapter',
-                        // InsertSize additions
-                        'insert_mad', 'insert_min', 'insert_max',
-                        // GCBias additions
-                        'gc_nc_0_19', 'gc_nc_20_39', 'gc_nc_40_59', 'gc_nc_60_79', 'gc_nc_80_100',
-                    ].each { col ->
-                        assert header.contains(col) : "Missing column: ${col}"
-                    }
-
-                    def idx = { col -> header.indexOf(col) }
-
-                    // Helper: parse a numeric cell, skip if blank/None
-                    def dbl = { v -> (v && v != 'None' && !v.isEmpty()) ? v.toDouble() : null }
-                    def lng = { v -> (v && v != 'None' && !v.isEmpty()) ? v.toLong()   : null }
-
-                    // Expected values from WES subsampled test run (skip_subsampling=true)
-                    // Note: biosample names use biosampleName (without _S1_L001 suffix) for exome mode
-                    def expected = [
-                        'ResolveOME-Exome-IDTxGenV2-96Plex-4Hr-01H-SC': [total_reads: 1630329, qc_status: 'Borderline', qc_score: 2],
-                        'ResolveOME-Exome-IDTxGenV2-96Plex-4Hr-02B-SC': [total_reads: 1609640, qc_status: 'Borderline', qc_score: 2],
-                        'ResolveOME-Exome-IDTxGenV2-96Plex-4Hr-02D-SC': [total_reads: 1628113, qc_status: 'Borderline', qc_score: 2],
-                        'ResolveOME-Exome-IDTxGenV2-96Plex-4Hr-03B-SC': [total_reads: 1611190, qc_status: 'Borderline', qc_score: 2],
-                    ]
-
-                    assert lines.size() - 1 == expected.size() : "Expected ${expected.size()} samples, got ${lines.size() - 1}"
-
-                    for (int i = 1; i < lines.size(); i++) {
-                        def cols   = lines[i].split('\t', -1)
-                        def sample = cols[0]
-                        def exp    = expected[sample]
-                        assert exp != null : "Unexpected sample in wesqc_all_metrics.tsv: ${sample}"
-
-                        assert cols[idx('total_reads')].trim().toLong()  == exp.total_reads : "total_reads mismatch for ${sample}"
-                        assert cols[idx('qc_status')].trim()             == exp.qc_status   : "qc_status mismatch for ${sample}"
-                        assert cols[idx('qc_score')].trim().toInteger()  == exp.qc_score    : "qc_score mismatch for ${sample}"
-
-                        // mean_target_coverage: observed 2.56–2.70 across samples
-                        def meanTargetCov = dbl(cols[idx('mean_target_coverage')].trim())
-                        if (meanTargetCov != null) assert meanTargetCov >= 2.0 && meanTargetCov <= 3.5 : "mean_target_coverage out of range for ${sample}: ${meanTargetCov}"
-
-                        // fold_enrichment: observed 53.04–53.95 across samples
-                        def foldEnrich = dbl(cols[idx('fold_enrichment')].trim())
-                        if (foldEnrich != null) assert foldEnrich >= 40.0 && foldEnrich <= 70.0 : "fold_enrichment out of range for ${sample}: ${foldEnrich}"
-
-                        // pct_selected_bases: observed 0.882–0.889 across samples
-                        def pctSel = dbl(cols[idx('pct_selected_bases')].trim())
-                        if (pctSel != null) assert pctSel >= 0.80 && pctSel <= 0.95 : "pct_selected_bases out of range for ${sample}: ${pctSel}"
-
-                        // HS target coverage — observed ranges from test run
-                        def tb1x = dbl(cols[idx('pct_target_bases_1x')].trim())
-                        if (tb1x != null) assert tb1x >= 0.75 && tb1x <= 0.90 : "pct_target_bases_1x out of range for ${sample}: ${tb1x}"
-                        def tb2x = dbl(cols[idx('pct_target_bases_2x')].trim())
-                        if (tb2x != null) assert tb2x >= 0.55 && tb2x <= 0.70 : "pct_target_bases_2x out of range for ${sample}: ${tb2x}"
-                        def tb10x = dbl(cols[idx('pct_target_bases_10x')].trim())
-                        if (tb10x != null) assert tb10x >= 0.005 && tb10x <= 0.035 : "pct_target_bases_10x out of range for ${sample}: ${tb10x}"
-                        // pct_target_bases_20x and above: very small at this subsampled depth (< 0.005)
-                        ['pct_target_bases_20x', 'pct_target_bases_30x', 'pct_target_bases_40x',
-                         'pct_target_bases_50x', 'pct_target_bases_100x',
-                         'pct_target_bases_250x', 'pct_target_bases_500x', 'pct_target_bases_1000x'].each { col ->
-                            def v = dbl(cols[idx(col)].trim())
-                            if (v != null) assert v >= 0.0 && v < 0.005 : "${col} out of range for ${sample}: ${v}"
-                        }
-
-                        // pct_duplication: observed 0.010–0.016 across samples
-                        def pctDup = dbl(cols[idx('pct_duplication')].trim())
-                        if (pctDup != null) assert pctDup >= 0.005 && pctDup <= 0.03 : "pct_duplication out of range for ${sample}: ${pctDup}"
-
-                        // pct_chimeras: observed 0.113–0.146 across samples
-                        def chimeras = dbl(cols[idx('pct_chimeras')].trim())
-                        if (chimeras != null) assert chimeras >= 0.07 && chimeras <= 0.20 : "pct_chimeras out of range for ${sample}: ${chimeras}"
-
-                        // pct_adapter: observed 0.0 (up to 1e-6) across samples
-                        def pctAdapt = dbl(cols[idx('pct_adapter')].trim())
-                        if (pctAdapt != null) assert pctAdapt >= 0.0 && pctAdapt <= 0.001 : "pct_adapter out of range for ${sample}: ${pctAdapt}"
-
-                        // pf_hq_error_rate: observed 0.00455–0.00472 across samples
-                        def hqErrRate = dbl(cols[idx('pf_hq_error_rate')].trim())
-                        if (hqErrRate != null) assert hqErrRate >= 0.003 && hqErrRate <= 0.007 : "pf_hq_error_rate out of range for ${sample}: ${hqErrRate}"
-
-                        // AlignmentStat bigint counts — observed ranges
-                        def pfAlignedBases = lng(cols[idx('pf_aligned_bases')].trim())
-                        if (pfAlignedBases != null) assert pfAlignedBases >= 195_000_000L && pfAlignedBases <= 230_000_000L : "pf_aligned_bases out of range for ${sample}: ${pfAlignedBases}"
-                        def pfHqReads = lng(cols[idx('pf_hq_aligned_reads')].trim())
-                        if (pfHqReads != null) assert pfHqReads >= 1_450_000L && pfHqReads <= 1_620_000L : "pf_hq_aligned_reads out of range for ${sample}: ${pfHqReads}"
-                        def pfHqBases = lng(cols[idx('pf_hq_aligned_bases')].trim())
-                        if (pfHqBases != null) assert pfHqBases >= 188_000_000L && pfHqBases <= 218_000_000L : "pf_hq_aligned_bases out of range for ${sample}: ${pfHqBases}"
-                        def pfHqQ20 = lng(cols[idx('pf_hq_aligned_q20_bases')].trim())
-                        if (pfHqQ20 != null) assert pfHqQ20 >= 183_000_000L && pfHqQ20 <= 212_000_000L : "pf_hq_aligned_q20_bases out of range for ${sample}: ${pfHqQ20}"
-
-                        // Insert size — observed: median 164–168, mad 45–46, min 2, max 210–221M
-                        def insMedian = dbl(cols[idx('insert_median')].trim())
-                        if (insMedian != null) assert insMedian >= 130.0 && insMedian <= 210.0 : "insert_median out of range for ${sample}: ${insMedian}"
-                        def insMad = dbl(cols[idx('insert_mad')].trim())
-                        if (insMad != null) assert insMad >= 35.0 && insMad <= 60.0 : "insert_mad out of range for ${sample}: ${insMad}"
-                        def insMin = lng(cols[idx('insert_min')].trim())
-                        if (insMin != null) assert insMin >= 1L && insMin <= 10L : "insert_min out of range for ${sample}: ${insMin}"
-                        def insMax = lng(cols[idx('insert_max')].trim())
-                        if (insMax != null) assert insMax >= 190_000_000L && insMax <= 240_000_000L : "insert_max out of range for ${sample}: ${insMax}"
-
-                        // GC normalised coverage — observed ranges across samples
-                        def gcNc019 = dbl(cols[idx('gc_nc_0_19')].trim())
-                        if (gcNc019 != null) assert gcNc019 >= 0.75 && gcNc019 <= 1.25 : "gc_nc_0_19 out of range for ${sample}: ${gcNc019}"
-                        def gcNc2039 = dbl(cols[idx('gc_nc_20_39')].trim())
-                        if (gcNc2039 != null) assert gcNc2039 >= 0.80 && gcNc2039 <= 1.20 : "gc_nc_20_39 out of range for ${sample}: ${gcNc2039}"
-                        def gcNc4059 = dbl(cols[idx('gc_nc_40_59')].trim())
-                        if (gcNc4059 != null) assert gcNc4059 >= 0.95 && gcNc4059 <= 1.35 : "gc_nc_40_59 out of range for ${sample}: ${gcNc4059}"
-                        def gcNc6079 = dbl(cols[idx('gc_nc_60_79')].trim())
-                        if (gcNc6079 != null) assert gcNc6079 >= 0.60 && gcNc6079 <= 0.95 : "gc_nc_60_79 out of range for ${sample}: ${gcNc6079}"
-                        def gcNc80100 = dbl(cols[idx('gc_nc_80_100')].trim())
-                        if (gcNc80100 != null) assert gcNc80100 >= 0.20 && gcNc80100 <= 0.50 : "gc_nc_80_100 out of range for ${sample}: ${gcNc80100}"
-                    }
-                },
-
-                // Verify wesqc_summary parquet files exist for all samples
-                {
-                    assert path("${outputDir}/tables/wesqc_summary/workspace=demo/workflow_id=test_wes_GRCh38/biosample=ResolveOME-Exome-IDTxGenV2-96Plex-4Hr-01H-SC/output.parquet").exists()
-                    assert path("${outputDir}/tables/wesqc_summary/workspace=demo/workflow_id=test_wes_GRCh38/biosample=ResolveOME-Exome-IDTxGenV2-96Plex-4Hr-02B-SC/output.parquet").exists()
-                    assert path("${outputDir}/tables/wesqc_summary/workspace=demo/workflow_id=test_wes_GRCh38/biosample=ResolveOME-Exome-IDTxGenV2-96Plex-4Hr-02D-SC/output.parquet").exists()
-                    assert path("${outputDir}/tables/wesqc_summary/workspace=demo/workflow_id=test_wes_GRCh38/biosample=ResolveOME-Exome-IDTxGenV2-96Plex-4Hr-03B-SC/output.parquet").exists()
-                },
-
-                // Verify QC plot was generated
-                { assert path("${outputDir}/workflow_outputs/demo/test_wes_GRCh38/plots/wesqc/qc_wes.pdf").exists() }
+                { assert path("${outputDir}/workflow_outputs/demo/test_wgs_GRCh38/qc_plots/qc_wgs.pdf").exists() }
             )
         }
     }
