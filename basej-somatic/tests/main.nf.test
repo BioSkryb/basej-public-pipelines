@@ -1,0 +1,106 @@
+nextflow_pipeline {
+
+    name "Test Workflow main.nf"
+    script "main.nf"
+
+    test("somatic_GRCh38_chr22_from_vcf") {
+        tag "GRCh38"
+        when {
+            params {
+                outputDir    = "${outputDir}"
+                workspace    = "demo"
+                workflow_id  = "test_somatic_GRCh38"
+                input_csv    = "$baseDir/tests/data/inputs/nftest_input.csv"
+                max_memory   = "24.GB"
+                max_cpus     = "8"
+                architecture = "x86"
+                genome       = "GRCh38"
+                chrs         = "chr22"
+            }
+        }
+
+        then {
+            assertAll(
+
+                { assert workflow.success },
+
+                // MultiQC report
+                { assert path("${outputDir}/workflow_outputs/demo/test_somatic_GRCh38/reports/multiqc_report.html").exists() },
+
+                // Per-sample somatic annotated VCFs (5 samples)
+                {
+                    def vcfDir = "${outputDir}/workflow_outputs/demo/test_somatic_GRCh38/secondary_analyses/vcf_somatic"
+                    assert path("${vcfDir}/BSKB-1159-A01-Sample-1-PL01-DNA-SC09_somatic_annotated.vcf.gz").exists()
+                    assert path("${vcfDir}/BSKB-1159-A02-Sample-1-PL01-DNA-SC18_somatic_annotated.vcf.gz").exists()
+                    assert path("${vcfDir}/BSKB-1159-A03-Sample-1-PL01-DNA-SC26_somatic_annotated.vcf.gz").exists()
+                    assert path("${vcfDir}/BSKB-1159-A04-Sample-1-PL01-DNA-SC34_somatic_annotated.vcf.gz").exists()
+                    assert path("${vcfDir}/BSKB-1159-A06-Sample-1-PL01-DNA-SC52_somatic_annotated.vcf.gz").exists()
+                },
+
+                // VEP-annotated group VCF
+                {
+                    assert path("${outputDir}/workflow_outputs/demo/test_somatic_GRCh38/secondary_analyses/vep_annotated/group_Patient_vep.vcf.gz").exists()
+                    assert path("${outputDir}/workflow_outputs/demo/test_somatic_GRCh38/secondary_analyses/vep_annotated/group_Patient_vep.vcf.gz.tbi").exists()
+                },
+
+                // Variant tables (Sequoia filtering output)
+                { assert path("${outputDir}/workflow_outputs/demo/test_somatic_GRCh38/secondary_analyses/variant_tables/Sequoia_group_Patient_filtering_all.txt").exists() },
+
+                // Phylogeny matrices (NR/NV for downstream lineage pipeline)
+                {
+                    def matricesDir = "${outputDir}/workflow_outputs/demo/test_somatic_GRCh38/secondary_analyses/phylogeny_matrices"
+                    assert path("${matricesDir}/Patient_NR_HQRoundStatisticalFilteredPlusQCFilteredPlusDepthFilteredForPhylogeny.tsv").exists()
+                    assert path("${matricesDir}/Patient_NV_HQRoundStatisticalFilteredPlusQCFilteredPlusDepthFilteredForPhylogeny.tsv").exists()
+                    assert path("${matricesDir}/Patient_binary_matrix_HQRoundStatisticalFilteredPlusQCFilteredPlusDepthFilteredForPhylogeny.tsv").exists()
+                },
+
+                // Cohort metrics — validate filtering funnel produced variants
+                {
+                    def f = path("${outputDir}/workflow_outputs/demo/test_somatic_GRCh38/secondary_analyses/cohort_metrics/cohort_metrics_Patient.tsv")
+                    assert f.exists()
+                    def lines = f.readLines()
+                    def data = [:]
+                    lines.each { line ->
+                        def parts = line.split('\t')
+                        if (parts.size() >= 3) {
+                            data["${parts[0]}_${parts[1]}"] = parts[2]
+                        }
+                    }
+
+                    // Verify variants were found and passed through filtering
+                    assert data['funnel_MERGE_PROCESSED_VCF_n_input']?.toInteger() > 0 : "No variants entered the pipeline"
+                    assert data['funnel_Binom_Betabinom_Filter_n_passing']?.toInteger() > 0 : "No variants passed binomial filter"
+                    assert data['scheme_HQRoundStatisticalFilteredPlusQCFilteredPlusDepthFilteredForPhylogeny_total']?.toInteger() > 0 : "No final phylogeny variants"
+                },
+
+                // Somatic variants summary parquet (per-sample)
+                {
+                    def tableDir = "${outputDir}/tables/somatic_variants_summary/workspace=demo/workflow_id=test_somatic_GRCh38"
+                    assert path("${tableDir}/biosample=BSKB-1159-A01-Sample-1-PL01-DNA-SC09/output.parquet").exists()
+                    assert path("${tableDir}/biosample=BSKB-1159-A02-Sample-1-PL01-DNA-SC18/output.parquet").exists()
+                    assert path("${tableDir}/biosample=BSKB-1159-A03-Sample-1-PL01-DNA-SC26/output.parquet").exists()
+                    assert path("${tableDir}/biosample=BSKB-1159-A04-Sample-1-PL01-DNA-SC34/output.parquet").exists()
+                    assert path("${tableDir}/biosample=BSKB-1159-A06-Sample-1-PL01-DNA-SC52/output.parquet").exists()
+                },
+
+                // Downstream inputs bundle (for lineage pipeline)
+                { assert path("${outputDir}/workflow_outputs/demo/test_somatic_GRCh38/secondary_analyses/downstream_inputs/downstream_inputs_Patient").exists() },
+
+                // Filter funnel report
+                { assert path("${outputDir}/workflow_outputs/demo/test_somatic_GRCh38/secondary_analyses/filter_funnel/variant_filter_tracking_Patient.tsv").exists() },
+
+                // Germline outputs
+                { assert path("${outputDir}/workflow_outputs/demo/test_somatic_GRCh38/secondary_analyses/germline_annotated/Patient_hcgermline_annotated.vcf.gz").exists() },
+                { assert path("${outputDir}/workflow_outputs/demo/test_somatic_GRCh38/secondary_analyses/germline_prevalence/germline_prevalence_long_Patient.tsv").exists() },
+
+                // ADO analysis
+                { assert path("${outputDir}/workflow_outputs/demo/test_somatic_GRCh38/secondary_analyses/ado_plots/ADO_germline_dist.png").exists() },
+
+                // Lineage inputs manifest (for basej-lineage handoff)
+                { assert path("${outputDir}/workflow_outputs/demo/test_somatic_GRCh38/index/lineage_inputs.csv").exists() },
+                { assert path("${outputDir}/workflow_outputs/demo/test_somatic_GRCh38/index/lineage_vcfs_Patient.csv").exists() }
+            )
+        }
+    }
+
+}

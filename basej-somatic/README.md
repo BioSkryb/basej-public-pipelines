@@ -191,6 +191,60 @@ variant placement empty and skips the VAF/digital heatmaps. The fuller
 `PlusMandatoryNonEmpty` matrix keeps variants available for placement so the heatmaps
 render.
 
+# Testing
+
+## Test Data Access
+
+Test data is stored on Wasabi-backed S3 at `s3://bioskryb-public-data/pipeline_resources/dev-resources/local_test_files/`.
+
+To access the test data:
+
+**Step 1 — Get your access keys**
+
+Retrieve your AWS credentials from BioSkryb support (contact basejumper-support for the access link).
+
+**Step 2 — Set environment variables**
+
+```bash
+export AWS_ACCESS_KEY_ID=<provided_access_key>
+export AWS_SECRET_ACCESS_KEY=<provided_secret_key>
+export AWS_DEFAULT_REGION=us-east-1
+```
+
+## Running a Test
+
+Run the pipeline with the provided test input CSV (5 samples, chr22-only, from VCF, ~30 min):
+
+```bash
+nextflow run main.nf \
+  --input_csv tests/data/inputs/nftest_input.csv \
+  --max_cpus 8 --max_memory 24.GB --architecture x86 \
+  --genome GRCh38 --chrs "chr22" \
+  --outputDir results_test
+```
+
+The test input uses pre-computed DNAscope VCFs, so DNAscope calling is skipped. BAMs are still required for the pileup step.
+
+## nf-test (Automated Testing)
+
+Install nf-test (requires Java 11+):
+
+```bash
+curl -fsSL https://code.askimed.com/install/nf-test | bash
+mv nf-test /usr/local/bin/
+```
+
+Run the automated tests:
+
+```bash
+# Run all tests
+nf-test test
+
+# Run only the GRCh38 test
+nf-test test tests/main.nf.test --tag GRCh38
+```
+
+
 # Need Help?
 
 If you need any help, please [submit a helpdesk ticket](https://bioskryb.atlassian.net/servicedesk/customer/portal/3/group/14/create/156).
