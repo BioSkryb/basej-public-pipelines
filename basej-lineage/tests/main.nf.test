@@ -1,0 +1,72 @@
+nextflow_pipeline {
+
+    name "Test Workflow main.nf"
+    script "main.nf"
+
+    test("lineage_GRCh38_chr22_test") {
+        tag "GRCh38"
+        when {
+            params {
+                outputDir    = "${outputDir}"
+                workspace    = "demo"
+                workflow_id  = "test_lineage_GRCh38"
+                max_memory   = "24.GB"
+                max_cpus     = "8"
+                genome       = "GRCh38"
+
+                // Use vcf_dir to provide per-sample somatic annotated VCFs
+                vcf_dir      = "$baseDir/tests/data/inputs/vcfs"
+
+                // Pre-built NR/NV matrices from basej-somatic (PlusMandatoryNonEmpty scheme)
+                nr_matrix    = "$baseDir/tests/data/inputs/nftest_NR_matrix.tsv"
+                nv_matrix    = "$baseDir/tests/data/inputs/nftest_NV_matrix.tsv"
+
+                // Binary matrix for mutational signatures
+                binary_matrix = "$baseDir/tests/data/inputs/nftest_binary_matrix.tsv"
+
+                // Sample metadata
+                gender       = "male"
+                cohort_id    = "test_cohort"
+
+                // Phylogeny modes
+                sequoia_phylogeny_mode = "snv,indel,both"
+            }
+        }
+
+        then {
+            assertAll(
+
+                { assert workflow.success },
+
+                // MultiQC report
+                { assert path("${outputDir}/workflow_outputs/demo/test_lineage_GRCh38/reports/multiqc_report.html").exists() },
+
+                // Genotype tables (per sample)
+                {
+                    def genotypeDir = "${outputDir}/workflow_outputs/demo/test_lineage_GRCh38/secondary_analyses/genotype_tables"
+                    assert path(genotypeDir).exists()
+                },
+
+                // Phylogeny outputs (at least one variant type should produce a tree)
+                {
+                    def phyloBase = "${outputDir}/workflow_outputs/demo/test_lineage_GRCh38/secondary_analyses/phylogeny"
+                    // SNV phylogeny should exist since we have 5 SNVs
+                    assert path("${phyloBase}/snv").exists() || path("${phyloBase}/both").exists() : "No phylogeny outputs found"
+                },
+
+                // Variant placement outputs
+                {
+                    def placementBase = "${outputDir}/workflow_outputs/demo/test_lineage_GRCh38/secondary_analyses/variant_placement"
+                    assert path(placementBase).exists()
+                },
+
+                // Heatmaps (VAF/digital)
+                {
+                    def heatmapDir = "${outputDir}/workflow_outputs/demo/test_lineage_GRCh38/secondary_analyses/heatmaps"
+                    assert path(heatmapDir).exists()
+                }
+            )
+        }
+    }
+
+}

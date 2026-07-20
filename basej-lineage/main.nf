@@ -173,19 +173,59 @@ workflow {
         error "basej-lineage: sequoia_mpboot_bootstrap must be >= 1000 (MPBoot requirement); got ${params.sequoia_mpboot_bootstrap}."
     }
 
-    // ── Required pre-built NR/NV matrices ─────────────────────────────────────
-    def nr_set = params.nr_matrix != null && !params.nr_matrix.toString().trim().isEmpty()
-    def nv_set = params.nv_matrix != null && !params.nv_matrix.toString().trim().isEmpty()
-    if ( !nr_set || !nv_set ) {
-        error "basej-lineage: both --nr_matrix and --nv_matrix are required (pre-built NR/NV matrices)."
+    // ── Lineage manifest parsing (--lineage_csv from somatic connector) ──────
+    // When lineage_csv is provided, parse the CSV and populate params from its rows.
+    // Format: group,param,path (single-group; first group wins, extra groups ignored).
+    // Individual params (--nr_matrix, etc.) take precedence as explicit overrides.
+    def lineage_csv_set = params.lineage_csv != null && !params.lineage_csv.toString().trim().isEmpty()
+    def manifest_params = [:]  // param_name → path (from manifest CSV)
+    if ( lineage_csv_set ) {
+        log.info "basej-lineage: --lineage_csv provided — parsing manifest to resolve inputs."
+        def csv_file = file(params.lineage_csv, checkIfExists: true)
+        def lines = csv_file.text.trim().split('\n').toList()
+        if ( lines.size() < 2 ) {
+            error "basej-lineage: lineage_csv has no data rows (expected header: group,param,path)."
+        }
+        // Skip header, parse rows
+        def target_group = null
+        lines.drop(1).each { line ->
+            def cols = line.split(',', 3)
+            if ( cols.size() < 3 ) return  // skip malformed
+            def g = cols[0].trim()
+            def p = cols[1].trim()
+            def v = cols[2].trim()
+            // Single-group: lock to the first group encountered
+            if ( target_group == null ) target_group = g
+            if ( g != target_group ) {
+                log.warn "basej-lineage: lineage_csv contains multiple groups; using '${target_group}', ignoring '${g}'."
+                return
+            }
+            manifest_params[p] = v
+        }
+        log.info "basej-lineage: manifest resolved params for group '${target_group}': ${manifest_params.keySet().sort().join(', ')}"
     }
-    def nr_file = file(params.nr_matrix, checkIfExists: true)
-    def nv_file = file(params.nv_matrix, checkIfExists: true)
+
+    // Helper: resolve a param — explicit CLI param wins, else manifest, else null/empty.
+    def resolveParam = { String paramName, Object paramValue ->
+        def explicitly_set = paramValue != null && !paramValue.toString().trim().isEmpty()
+        if ( explicitly_set ) return paramValue.toString().trim()
+        return manifest_params.containsKey(paramName) ? manifest_params[paramName] : null
+    }
+
+    // ── Required pre-built NR/NV matrices ─────────────────────────────────────
+    def resolved_nr = resolveParam('nr_matrix', params.nr_matrix)
+    def resolved_nv = resolveParam('nv_matrix', params.nv_matrix)
+    if ( !resolved_nr || !resolved_nv ) {
+        error "basej-lineage: both --nr_matrix and --nv_matrix are required (pre-built NR/NV matrices). Provide them directly or via --lineage_csv."
+    }
+    def nr_file = file(resolved_nr, checkIfExists: true)
+    def nv_file = file(resolved_nv, checkIfExists: true)
 
     // ── Optional genotype_bin matrix (Option D) — /dev/null sentinel when absent ──
-    def genotype_bin_set  = params.genotype_bin != null && !params.genotype_bin.toString().trim().isEmpty()
+    def resolved_genotype_bin = resolveParam('genotype_bin', params.genotype_bin)
+    def genotype_bin_set  = resolved_genotype_bin != null
     def genotype_bin_file = genotype_bin_set
-        ? file(params.genotype_bin, checkIfExists: true)
+        ? file(resolved_genotype_bin, checkIfExists: true)
         : file('/dev/null')
     if ( genotype_bin_set ) {
         log.info "basej-lineage: genotype_bin provided (Option D) — phylogeny will use supplied genotype calls."
@@ -194,28 +234,29 @@ workflow {
     }
 
     // ── Optional mandatory_variants_qc_status — /dev/null sentinel when absent ──
-    def mandatory_qc_set  = params.mandatory_variants_qc_status != null &&
-                            !params.mandatory_variants_qc_status.toString().trim().isEmpty()
+    def resolved_mandatory_qc = resolveParam('mandatory_variants_qc_status', params.mandatory_variants_qc_status)
+    def mandatory_qc_set  = resolved_mandatory_qc != null
     def mandatory_qc_file = mandatory_qc_set
-        ? file(params.mandatory_variants_qc_status, checkIfExists: true)
+        ? file(resolved_mandatory_qc, checkIfExists: true)
         : file('/dev/null')
     if ( mandatory_qc_set ) {
         log.info "basej-lineage: mandatory_variants_qc_status provided — failing mandatory variants removed from heatmaps."
     }
 
     // ── VCF input (one of input_csv / vcf_dir) — for per-sample genotype tables ──
-    def use_input_csv = params.input_csv != null && !params.input_csv.toString().trim().isEmpty()
+    def resolved_input_csv = resolveParam('input_csv', params.input_csv)
+    def use_input_csv = resolved_input_csv != null
     def vcf_dir_set   = params.vcf_dir   != null && !params.vcf_dir.toString().trim().isEmpty()
     if ( use_input_csv && vcf_dir_set ) {
         log.warn "basej-lineage: both input_csv and vcf_dir are set; using input_csv."
     }
     if ( !use_input_csv && !vcf_dir_set ) {
-        error "basej-lineage: set --input_csv (CSV with header: biosampleName,vcf [,vcf_index]) or --vcf_dir (dir of *_somatic_annotated.vcf.gz + .tbi). VCFs feed the per-sample genotype tables consumed by POSTPROCESS."
+        error "basej-lineage: set --input_csv (CSV with header: biosampleName,vcf [,vcf_index]) or --vcf_dir (dir of *_somatic_annotated.vcf.gz + .tbi). Provide them directly or via --lineage_csv. VCFs feed the per-sample genotype tables consumed by POSTPROCESS."
     }
 
     def ch_samples
     if ( use_input_csv ) {
-        ch_samples = channel.fromPath( params.input_csv, checkIfExists: true )
+        ch_samples = channel.fromPath( resolved_input_csv, checkIfExists: true )
             .splitCsv( header: true )
             .map { row ->
                 def clean = row.collectEntries { k, v ->
@@ -281,9 +322,10 @@ workflow {
         .set { ch_lineage_bundle }
 
     // ── Subworkflow 2: mutational signatures from a binary matrix (optional) ──
-    // Runs only when --binary_matrix is provided; otherwise the mutsig publish /
-    // MultiQC channels stay empty.
-    def binary_set = params.binary_matrix != null && !params.binary_matrix.toString().trim().isEmpty()
+    // Runs only when --binary_matrix is provided (or resolved from manifest);
+    // otherwise the mutsig publish / MultiQC channels stay empty.
+    def resolved_binary_matrix = resolveParam('binary_matrix', params.binary_matrix)
+    def binary_set = resolved_binary_matrix != null
 
     ch_pub_sig_activities  = channel.empty()
     ch_pub_sig_bargraphs   = channel.empty()
@@ -292,7 +334,7 @@ workflow {
     ch_mqc_mutsig          = channel.empty()
 
     if ( binary_set ) {
-        def ch_binary = channel.fromPath( params.binary_matrix, checkIfExists: true )
+        def ch_binary = channel.fromPath( resolved_binary_matrix, checkIfExists: true )
 
         MUTSIGNATURES_FROM_MATRICES(
             ch_binary,

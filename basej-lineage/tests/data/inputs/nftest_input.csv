@@ -1,0 +1,6 @@
+biosampleName,vcf,vcf_index
+BSKB-1159-A01-Sample-1-PL01-DNA-SC09,vcfs/BSKB-1159-A01-Sample-1-PL01-DNA-SC09_somatic_annotated.vcf.gz,vcfs/BSKB-1159-A01-Sample-1-PL01-DNA-SC09_somatic_annotated.vcf.gz.tbi
+BSKB-1159-A02-Sample-1-PL01-DNA-SC18,vcfs/BSKB-1159-A02-Sample-1-PL01-DNA-SC18_somatic_annotated.vcf.gz,vcfs/BSKB-1159-A02-Sample-1-PL01-DNA-SC18_somatic_annotated.vcf.gz.tbi
+BSKB-1159-A03-Sample-1-PL01-DNA-SC26,vcfs/BSKB-1159-A03-Sample-1-PL01-DNA-SC26_somatic_annotated.vcf.gz,vcfs/BSKB-1159-A03-Sample-1-PL01-DNA-SC26_somatic_annotated.vcf.gz.tbi
+BSKB-1159-A04-Sample-1-PL01-DNA-SC34,vcfs/BSKB-1159-A04-Sample-1-PL01-DNA-SC34_somatic_annotated.vcf.gz,vcfs/BSKB-1159-A04-Sample-1-PL01-DNA-SC34_somatic_annotated.vcf.gz.tbi
+BSKB-1159-A06-Sample-1-PL01-DNA-SC52,vcfs/BSKB-1159-A06-Sample-1-PL01-DNA-SC52_somatic_annotated.vcf.gz,vcfs/BSKB-1159-A06-Sample-1-PL01-DNA-SC52_somatic_annotated.vcf.gz.tbi

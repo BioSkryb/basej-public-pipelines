@@ -92,9 +92,17 @@
             "title": "Matrix inputs (from basej-somatic)",
             "type": "object",
             "fa_icon": "fas fa-table",
-            "description": "Pre-built matrices produced by basej-somatic. NR/NV drive phylogeny + placement; the binary matrix drives mutational signatures.",
-            "required": ["nr_matrix", "nv_matrix"],
+            "description": "Pre-built matrices produced by basej-somatic. NR/NV drive phylogeny + placement; the binary matrix drives mutational signatures. Provide these directly OR supply --lineage_csv to resolve them from the basej-somatic manifest.",
             "properties": {
+                "lineage_csv": {
+                    "type": "string",
+                    "format": "file-path",
+                    "mimetype": "text/csv",
+                    "pattern": "^\\S+\\.csv$",
+                    "description": "Manifest CSV produced by basej-somatic (lineage_inputs.csv).",
+                    "help_text": "When provided, the pipeline parses this CSV (header: group,param,path) and resolves nr_matrix, nv_matrix, binary_matrix, mandatory_variants_qc_status, and input_csv from its rows. Single-group assumed (first group used). Individual params override manifest values when both are set.",
+                    "fa_icon": "fas fa-file-csv"
+                },
                 "nr_matrix": {
                     "type": "string",
                     "format": "file-path",
