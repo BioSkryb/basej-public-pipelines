@@ -15,7 +15,9 @@
 
         "genome":                 { "$ref": "#/definitions/reference_genome_options/properties/genome" },
         "reference":              { "$ref": "#/definitions/reference_genome_options/properties/reference" },
+        "deepvariant_model_type": { "$ref": "#/definitions/reference_genome_options/properties/deepvariant_model_type" },
         "deepvariant_model":      { "$ref": "#/definitions/reference_genome_options/properties/deepvariant_model" },
+        "deepvariant_channel_list": { "$ref": "#/definitions/reference_genome_options/properties/deepvariant_channel_list" },
         "population_vcfs":        { "$ref": "#/definitions/reference_genome_options/properties/population_vcfs" },
         "checkpoint_filename":    { "$ref": "#/definitions/reference_genome_options/properties/checkpoint_filename" },
         "regions":                { "$ref": "#/definitions/reference_genome_options/properties/regions" },
@@ -124,17 +126,31 @@
                     "fa_icon": "fas fa-file-alt",
                     "hidden": true
                 },
+                "deepvariant_model_type": {
+                    "type": "string",
+                    "description": "Which BioSkryb-trained DeepVariant model to run.",
+                    "help_text": "Selects the model checkpoint and its population VCFs together, from conf/genomes.config. 'bioskrybv1' is the ResolveDNA model (8-channel [100,221,8]). 'bioskrybv2' is the ResolveOME 'rome' model (9-channel [100,221,10], adds the identity channel). 'resolvemethylv1' is the ResolveMethyl model (9-channel [100,221,9], same channel set as bioskrybv2 but a separate checkpoint). The model name is included in the output path (tool=deepvariant-<version>-<model_type>), so several models can be run over the same biosamples concurrently without overwriting each other. Set this rather than overriding deepvariant_model directly: make_examples derives its channel set from the checkpoint you pass, so pointing deepvariant_model at an arbitrary checkpoint bypasses the model/population-VCF pairing recorded in genomes.config. All three models are GRCh38 only.",
+                    "enum": ["bioskrybv1", "bioskrybv2", "resolvemethylv1"],
+                    "default": "bioskrybv1",
+                    "fa_icon": "fas fa-brain"
+                },
                 "deepvariant_model": {
                     "type": "string",
                     "format": "directory-path",
-                    "description": "Directory containing the DeepVariant checkpoint files. Defaults to the BioSkryb-trained model from genomes.config.",
+                    "description": "Directory containing the DeepVariant checkpoint files. Auto-resolved from deepvariant_model_type via genomes.config.",
                     "fa_icon": "fas fa-brain",
+                    "hidden": true
+                },
+                "deepvariant_channel_list": {
+                    "type": "string",
+                    "description": "The channel set the selected model's checkpoint declares, recorded in genomes.config. Informational: make_examples derives its channels from the checkpoint's example_info.json and ignores --channel_list when --checkpoint is set.",
+                    "fa_icon": "fas fa-layer-group",
                     "hidden": true
                 },
                 "population_vcfs": {
                     "type": "string",
                     "format": "directory-path",
-                    "description": "Directory of per-chromosome population VCFs used by make_examples.",
+                    "description": "Directory of per-chromosome population VCFs used by make_examples. Auto-resolved from deepvariant_model_type via genomes.config.",
                     "fa_icon": "fas fa-folder",
                     "hidden": true
                 },

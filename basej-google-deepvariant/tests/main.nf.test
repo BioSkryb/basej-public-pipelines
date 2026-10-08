@@ -17,6 +17,9 @@ nextflow_pipeline {
                 architecture = "x86"
                 genome       = "GRCh38"
                 mode         = "wgs"
+                // Pinned explicitly rather than leaning on the default, so the
+                // path asserted below stays honest if the default ever moves.
+                deepvariant_model_type = "bioskrybv1"
             }
         }
 
@@ -25,9 +28,11 @@ nextflow_pipeline {
 
                 { assert workflow.success },
 
-                // VCF output
+                // VCF output. The tool= segment carries the model type as well as
+                // the DV version, so bioskrybv1 and bioskrybv2 runs over the same
+                // biosamples land in separate prefixes instead of overwriting.
                 {
-                    def vcfDir = "${outputDir}/vcf/demo/dna/tool=deepvariant-1.8.0"
+                    def vcfDir = "${outputDir}/vcf/demo/dna/tool=deepvariant-1.8.0-bioskrybv1"
                     assert path("${vcfDir}/ResolveOMEv2.0-384-WGS-B4_deepvariant.vcf.gz").exists()
                     assert path("${vcfDir}/ResolveOMEv2.0-384-WGS-B4_deepvariant.vcf.gz.tbi").exists()
                 },
