@@ -3,6 +3,10 @@ nextflow_pipeline {
     name "Test Workflow main.nf"
     script "main.nf"
 
+    // chr22-only test reference bundle (minibwa index, GC windows, Ginkgo 1Mb/50bp refs).
+    // NFTEST_GENOMES_BASE points the tests at a local copy of the same bundle for development.
+    def genomesBase = System.getenv("NFTEST_GENOMES_BASE") ?: "s3://bioskryb-public-data/pipeline_resources/test_genomes"
+
     test("dna_qc_GRCh38_test") {
         tag "GRCh38"
         when {
@@ -10,141 +14,74 @@ nextflow_pipeline {
                 outputDir    = "${outputDir}"
                 workspace    = "demo"
                 workflow_id  = "test_GRCh38"
-                input_csv    = "$baseDir/tests/data/inputs/input_qcTest3.csv"
-                genomes_base = "s3://bioskryb-public-data/pipeline_resources/test_genomes"
+                input_csv    = "$baseDir/tests/data/inputs/nftest_input.csv"
+                genomes_base = genomesBase
                 max_memory   = "12.GB"
                 max_cpus     = "4"
                 architecture = "x86"
                 genome       = "GRCh38"
                 n_reads      = 500000
-                pipeline_tool = "opensource"
+                // On a chr22-only reference Ginkgo has too few segments to measure CNV skew
+                // (NA for every cell), which the DNA QC scoring correctly refuses to score.
+                // CNV + QC plots are therefore exercised by full-genome runs, not this CI test.
+                skip_cnv     = true
             }
         }
 
         then {
+            def wf = "${outputDir}/workflow_outputs/demo/test_GRCh38"
             assertAll(
-
                 { assert workflow.success },
+                { assert path("${wf}/reports/multiqc_report.html").exists() },
+                { assert path("${wf}/execution_info/tool_mqc_versions.yml").exists() },
+                { assert path("${wf}/index/bam.csv").exists() },
+                { assert path("${wf}/index/per_biosample_status.csv").readLines().size() == 3 },
 
-                { assert path("${outputDir}/workflow_outputs/demo/test_GRCh38/reports/multiqc_report.html").exists() },
-
-                // Check dnaqc_all_metrics.tsv - full-schema TSV for nf-test validation
                 {
-                    def f = path("${outputDir}/workflow_outputs/demo/test_GRCh38/metrics/qc_metrics/dnaqc_all_metrics.tsv")
+                    def f = path("${wf}/metrics/qc_metrics/dnaqc_all_metrics.tsv")
                     assert f.exists()
                     def lines  = f.readLines()
                     def header = lines[0].split('\t').toList()
-
-                    // Required columns must be present
-                    ['qc_score', 'qc_status', 'pct_chrm', 'align_pct_chimeras',
-                     'ginkgo_cnv_mapd', 'ginkgo_cnv_skew', 'preseq_count',
-                     'total_reads', 'final_reads', 'subsampled'].each { col ->
+                    ['qc_score', 'qc_status', 'pct_chrm', 'align_pct_chimeras', 'preseq_count',
+                     'total_reads', 'final_reads', 'subsampled', 'insert_size', 'fastp_q30_rate',
+                     'gc_gc_nc_40_59', 'insert_min', 'insert_max', 'insert_median_absolute_deviation'].each { col ->
                         assert header.contains(col) : "Missing column: ${col}"
                     }
-
                     def idx = { col -> header.indexOf(col) }
+                    def dbl = { v -> (v && v != 'NA' && v != 'None' && !v.isEmpty()) ? v.toDouble() : null }
 
-                    // Expected stable values per sample (chr22 test data)
-                    // final_reads ~498686: n_reads=500000 total reads (R1+R2) kept after seqkit subsampling
-                    // Values from chr22-only test reference (genomes_base = test_genomes).
-                    // total_reads/final_reads are pre-alignment counts (unchanged by ref);
-                    // qc_status/qc_score reflect chr22-only mapping (FAIL/1). Recalibrated for
-                    // the qc_scoring.R engine in custom_r_qcplots_0.3.0, which requires ALL of a
-                    // tier's conditions; the retired function_plot_qc_dna.R counted passed
-                    // thresholds instead and reported these cells as Borderline/3.
-                    //   preseq_count ~3.7e7 is ~70x below even the tier-3 borderline_preseq gate
-                    //   (2.5e9) because chr22 is ~1.6% of the genome, so no tier is reached; and
-                    //   total_reads (4.1e6) is above cutoff_reads_floor (1e6), so tier 2
-                    //   (Inconclusive) does not apply either. That leaves tier 1 / FAIL.
-                    // Consequence to be aware of: this fixture pins the FAIL path, so it does not
-                    // exercise the scoring engine's pass path. Asserting a meaningful
-                    // PASS/Borderline here would need chr22-scaled cutoffs, which requires making
-                    // the hardcoded assets/plot_qc_config.json path overridable by a param.
-                    // Related: SKEW_CNV is empty and MAPD is ~4e-06 for this fixture - Ginkgo
-                    // cannot derive meaningful segment statistics from a single chromosome, so the
-                    // CNV gates are not genuinely tested here (SKEW_CNV only avoids the
-                    // required_cols "unmeasured" path because QC_PLOTS fills it with 999).
-                    // NOTE: the zero-read sample (DNAQC-test1-0reads) is excluded here to keep
-                    // the CI test to representative samples. (The earlier CI crash was NOT the
-                    // 0-read sample itself but a container bug: binUnsorted/CNVcaller were copied
-                    // into the ginkgo image without an execute bit, so Ginkgo failed and its
-                    // ifEmpty guards + PublishOp then crashed. Fixed in the ginkgo Dockerfile.)
+                    // Read counts are pre-alignment and deterministic (seeded subsampling).
                     def expected = [
-                        'chr22_testsample1':   [total_reads: 4132446, final_reads: 498686, subsampled: 'True', qc_status: 'FAIL', qc_score: 1],
-                        'chr22_testsample2':   [total_reads: 4132446, final_reads: 498686, subsampled: 'True', qc_status: 'FAIL', qc_score: 1],
+                        'chr22_testsample1': [total_reads: 4132446, final_reads: 498686],
+                        'chr22_testsample2': [total_reads: 4132446, final_reads: 498686],
                     ]
-
-                    assert lines.size() - 1 == expected.size() : "Expected ${expected.size()} samples, got ${lines.size() - 1}"
-
+                    assert lines.size() - 1 == expected.size()
                     for (int i = 1; i < lines.size(); i++) {
-                        def cols   = lines[i].split('\t', -1)
-                        def sample = cols[0]
-                        def exp    = expected[sample]
-                        assert exp != null : "Unexpected sample in dnaqc_all_metrics.tsv: ${sample}"
-
-                        assert cols[idx('total_reads')].trim().toLong()  == exp.total_reads : "total_reads mismatch for ${sample}"
-                        assert cols[idx('final_reads')].trim().toLong()  == exp.final_reads : "final_reads mismatch for ${sample}"
-                        assert cols[idx('subsampled')].trim()            == exp.subsampled  : "subsampled mismatch for ${sample}"
-                        assert cols[idx('qc_status')].trim()             == exp.qc_status   : "qc_status mismatch for ${sample}"
-
-                        // qc_score: check only for non-zero-reads samples
-                        if (exp.qc_score != null) {
-                            assert cols[idx('qc_score')].trim().toDouble().intValue() == exp.qc_score : "qc_score mismatch for ${sample}"
-                        }
-
-                        // Skip remaining metric assertions for zero-reads sample
-                        if (exp.total_reads == 0) continue
-
-                        // pct_chrm must be a fraction (0-1) — regression: was stored as percentage before
-                        def pctChrm = cols[idx('pct_chrm')].trim()
-                        if (pctChrm && pctChrm != 'None') {
-                            assert pctChrm.toDouble() >= 0.0 && pctChrm.toDouble() <= 1.0 : "pct_chrm not a fraction for ${sample}: ${pctChrm}"
-                        }
-
-                        // align_pct_chimeras must be a fraction (0-1) — regression: was stored as percentage before
-                        def chimeras = cols[idx('align_pct_chimeras')].trim()
-                        if (chimeras && chimeras != 'None') {
-                            assert chimeras.toDouble() >= 0.0 && chimeras.toDouble() <= 1.0 : "align_pct_chimeras not a fraction for ${sample}: ${chimeras}"
-                        }
-
-                        // GRCh38 uses chr22-only data: Ginkgo MAPD should be present and positive
-                        def mapd = cols[idx('ginkgo_cnv_mapd')].trim()
-                        if (mapd && mapd != 'None' && !mapd.isEmpty()) {
-                            assert mapd.toDouble() > 0 : "ginkgo_cnv_mapd must be positive if present for ${sample}: ${mapd}"
-                        }
-
-                        // Ginkgo skew may be empty for chr22-only data
-                        def skew = cols[idx('ginkgo_cnv_skew')].trim()
-                        if (skew && skew != 'None' && !skew.isEmpty()) {
-                            assert skew.toDouble() >= -1.0 && skew.toDouble() <= 1.0 : "ginkgo_cnv_skew should be between -1 and 1 for ${sample}: ${skew}"
-                        }
-
-                        // preseq_count must be a positive integer
-                        def preseq = cols[idx('preseq_count')].trim()
-                        if (preseq && preseq != 'None' && preseq != '0') {
-                            assert preseq.toLong() > 0 : "preseq_count should be > 0 for ${sample}"
-                        }
+                        def c = lines[i].split('\t', -1)
+                        def s = c[idx('biosample')]
+                        def exp = expected[s]
+                        assert exp != null : "Unexpected sample: ${s}"
+                        assert c[idx('total_reads')].toLong() == exp.total_reads : "total_reads ${s}"
+                        assert c[idx('final_reads')].toLong() == exp.final_reads : "final_reads ${s}"
+                        assert c[idx('subsampled')] == 'True'
+                        // CNV skipped -> required CNV metrics missing -> FAIL (score 2, unmeasured)
+                        assert c[idx('qc_status')] == 'FAIL' : "qc_status ${s}"
+                        def v
+                        v = dbl(c[idx('pct_chrm')]);           assert v >= 0    && v <= 0.05 : "pct_chrm ${s}: ${v}"
+                        v = dbl(c[idx('align_pct_chimeras')]); assert v > 0.02  && v < 0.2   : "chimeras ${s}: ${v}"
+                        v = dbl(c[idx('preseq_count')]);       assert v > 1e6               : "preseq_count ${s}: ${v}"
+                        v = dbl(c[idx('insert_size')]);        assert v > 100   && v < 600   : "insert_size ${s}: ${v}"
+                        v = dbl(c[idx('fastp_q30_rate')]);     assert v > 0.7   && v <= 1.0  : "q30 ${s}: ${v}"
+                        v = dbl(c[idx('gc_gc_nc_40_59')]);     assert v > 0.5   && v < 1.5   : "gc_nc_40_59 ${s}: ${v}"
                     }
                 },
 
-                // Verify dnaqc_summary parquet files exist for all samples
                 {
-                    assert path("${outputDir}/tables/dnaqc_summary/workspace=demo/workflow_id=test_GRCh38/biosample=chr22_testsample1/output.parquet").exists()
-                    assert path("${outputDir}/tables/dnaqc_summary/workspace=demo/workflow_id=test_GRCh38/biosample=chr22_testsample2/output.parquet").exists()
-                },
-
-                // Verify cnv_summary parquet files exist for samples with data
-                {
-                    assert path("${outputDir}/tables/cnv_summary/workspace=demo/workflow_id=test_GRCh38/biosample=chr22_testsample1/output.parquet").exists()
-                    assert path("${outputDir}/tables/cnv_summary/workspace=demo/workflow_id=test_GRCh38/biosample=chr22_testsample2/output.parquet").exists()
-                },
-
-                { assert path("${outputDir}/workflow_outputs/demo/test_GRCh38/cnv/ginkgo_segcopy/SegCopy.binsize_1000000.tsv").exists() },
-                { assert path("${outputDir}/workflow_outputs/demo/test_GRCh38/qc_plots/CNV-Quadrants_mqc.jpg").exists() },
-                { assert path("${outputDir}/workflow_outputs/demo/test_GRCh38/qc_plots/QC_composition_mqc.jpg").exists() }
+                    ['chr22_testsample1', 'chr22_testsample2'].each { s ->
+                        assert path("${outputDir}/tables/dnaqc_summary/workspace=demo/workflow_id=test_GRCh38/biosample=${s}/output.parquet").exists()
+                    }
+                }
             )
         }
     }
-
-
 }

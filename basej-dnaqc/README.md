@@ -1,328 +1,219 @@
-# BaseJumper BASEJ-DNA-QC
+# BaseJumper BASEJ-DNA-QC (v2)
 
-The BioSkryb BASEJ-DNA-QC pipeline evaluates the quality of a single-cell DNA
-library and provides several QC metrics to assess the quality of the sequencing
-reads.
+The BioSkryb BASEJ-DNA-QC pipeline evaluates the quality of single-cell DNA
+libraries from low-pass sequencing (about 2M reads per sample). It reports
+alignment, duplication, coverage, GC-bias, insert-size, library-complexity and
+copy-number QC metrics, scores every biosample, and summarizes the run in a
+MultiQC report. Use it to pick the libraries that are worth sequencing deeper.
 
-One way that users can ensure a single-cell library is uniformly amplified with
-low allelic dropout is to first sequence using "low-pass" (low-throughput)
-sequencing of around 2M reads per sample. Data from the low-pass run can be used
-to estimate genome coverage if the libraries were to be used for high-depth
-sequencing, so users can select only quality libraries for high-depth runs.
-
-This README documents the **fully open-source** run of the pipeline, which is now
-the **default** (`pipeline_tool = opensource`). It uses only open-source tools and
-public container images — no proprietary Sentieon license is required. (To use the
-proprietary Sentieon path instead, pass `--pipeline_tool sentieon`.)
+Version 2 replaces the BWA-MEM2 / Picard / Sentieon implementation of 1.x with
+an open-source Rust toolchain. See [Migrating from 1.x](#migrating-from-1x).
 
 # Pipeline Overview
 
-Steps and tools used by the open-source run:
+- Subsample to `--n_reads` (default 2M) with **SeqKit** (FASTQ) or **samtools** (Ultima CRAM)
+- Concatenate multi-lane FASTQs (pipe-delimited lanes in the input CSV)
+- Trim adapters and collect read QC with **fastp** (FASTQ)
+- Align, mark duplicates and coordinate-sort in one streaming step:
+  **minibwa-rs** (BWA-MEM-lineage aligner) | **dupblaster** (Picard MarkDuplicates
+  algorithm) | **samtools sort**
+- Ultima CRAMs are not realigned: they are decoded and duplicate-marked again with
+  dupblaster after subsampling
+- Collect alignment, insert-size, coverage, chrM, quality-yield and GC-bias metrics in a
+  single pass with **bskryb-qc** (Rust)
+- Estimate library complexity with **preseq** (`bam2mr` + `gc_extrap`)
+- Call copy-number with a custom **Ginkgo** implementation (bedtools + Ginkgo R), and
+  derive CNV MAPD / skew for QC scoring
+- Score every biosample (1-5 tiers plus PASS / Borderline / FAIL) and draw QC
+  composition, score-distribution and CNV-quadrant plots
+- Write per-biosample Parquet tables and a **MultiQC** report
 
-- Subsample reads to 2 million using **SeqKit** (FASTQ) or **samtools** (Ultima CRAM) to compare metrics across samples
-- Evaluate sequencing quality and trim/clip reads using **fastp** (Illumina FASTQ)
-- Map reads to the reference genome using **BWA-MEM2**
-- Sort and index alignments using **samtools**
-- Remove duplicate reads using **samtools markdup** (`-r`, matching Sentieon's `Dedup --rmdup`, so duplicates are dropped from the BAM rather than only flagged)
-- Collect alignment, GC bias, insert size, mean-quality, quality-yield, and coverage metrics using **Picard** (`CollectMultipleMetrics`) plus `samtools depth`
-- Estimate library complexity using **preseq** (`bam2mr` + `gc_extrap`)
-- Evaluate copy-number variation (CNV) using a custom **Ginkgo** implementation (**bedtools** + Ginkgo R)
-- Generate per-biosample QC plots, consensus scores, and Parquet outputs (custom R/Python)
-- Aggregate metrics across biosamples and tools into an overall report using **MultiQC**
-
-The custom container images for the open-source run are **built locally** from the
-Dockerfiles in [`container/`](container/README.md) (see that README for the full
-image list and build instructions). Public biocontainers (fastp, bedtools,
-multiqc) are pulled directly from `quay.io`.
+The pipeline runs on **x86_64** only. Custom images are built locally from the
+Dockerfiles in [`container/`](container/). fastp, bedtools and MultiQC come from
+public `quay.io/biocontainers` images.
 
 # Running Locally
 
-Instructions for running BASEJ-DNA-QC on a local Ubuntu server.
+## Requirements
 
-## Install Java
-
-```
-sudo apt-get install default-jdk
-java -version
-```
-
-## Install AWS CLI
-
-```
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-unzip awscliv2.zip
-sudo ./aws/install
-```
-
-## Install Nextflow
+- Java 17+ and [Nextflow](https://www.nextflow.io/) 25.10.x
+- Docker (with the `buildx` plugin)
+- AWS CLI, if your inputs or references are on S3
 
 ```
 wget -qO- https://get.nextflow.io | bash
 sudo mv nextflow /usr/local/bin/
 ```
 
-## Install Docker
+## Build the container images
 
 ```
-# Add Docker's official GPG key:
-sudo apt-get update
-sudo apt-get install ca-certificates curl
-sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-sudo chmod a+r /etc/apt/keyrings/docker.asc
-
-# Add the repository to Apt sources:
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-sudo apt-get update
-
-sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+bash container/build_all_x86.sh
+cat container/_build_logs/SUMMARY.log    # every line should read OK
 ```
 
-> **No license required.** The open-source run does not use Sentieon, so there is
-> no license setup step. Build the custom images locally from [`container/`](container/README.md);
-> public biocontainers (fastp, bedtools, multiqc) are pulled from `quay.io`.
+This builds the `basejumper_*` images referenced in `nextflow.config`
+(SeqKit, samtools, minibwa-rustqc, bskryb-rustqc, preseq, Ginkgo, Ginkgo parser,
+Parquet/metrics and R plotting images). The Rust images compile from source and take
+a few minutes each.
 
-## Resources Required
+## Resources
 
-For a typical low-pass dataset (less than 8 million reads), 8 CPU cores and 30 GB
-of memory are sufficient for the alignment stage. You can constrain resources with:
+The aligner loads the full GRCh38 minibwa index (about 7.2 GB) into memory, so allow
+at least 16 GB of RAM. 8 CPUs and 28 GB is comfortable:
 
 ```
---max_cpus 8 --max_memory 30.GB
+--max_cpus 8 --max_memory 28.GB
 ```
 
 # Reference Data
 
-The pipeline needs a reference-genome bundle (FASTA, BWA-MEM2 index, intervals,
-and the Ginkgo CNV references). These are read from the location given by
-`--genomes_base`, which defaults to the BioSkryb shared S3 path
-(`s3://bioskryb-shared-data`).
+References are resolved under `--genomes_base` (default
+`s3://bioskryb-shared-data`). For a local run, download the GRCh38 bundle once and
+point `--genomes_base` at it. The pipeline reads these from
+`<genomes_base>/genomes/Homo_sapiens/NCBI/GRCh38/Annotation/GATK_bundle/`:
 
-For a public/local run, download the reference bundle for your genome once and
-point `--genomes_base` at your local copy. The directory you pass must contain the
-expected `genomes/...` layout (e.g.
-`<genomes_base>/genomes/Homo_sapiens/NCBI/GRCh38/...`). Then pass it on every run:
+| File | Used for |
+|---|---|
+| `Sequence/minibwa/genome.mbw`, `genome.l2b` | minibwa-rs alignment index |
+| `Sequence/genome.fa`, `genome.fa.fai` | GC bias and Ultima CRAM decoding |
+| base-metrics intervals (`genomes.config`: `base_metrics_intervals`) | interval-restricted alignment metrics |
+| `gcbias_windows/gcwin_basemetrics_w100.txt` | precomputed GC-bias windows |
+| Ginkgo references for the chosen `--bin_size` / `--read_length` | CNV calling |
 
-```
---genomes_base /path/to/local/genomes
-```
+Only **GRCh38** is supported in v2.
 
-This avoids per-run S3 access and lets the pipeline run fully offline once the
-data and container images are in place.
+# Input
 
-# Test Pipeline Execution
+The platform is auto-detected from the CSV columns (one platform per run).
 
-The example **input** datasets referenced below are publicly available under
-`s3://bioskryb-public-data/pipeline_resources` and are fetched automatically
-during the run. The **reference genome** is resolved from `--genomes_base` (see
-[Reference Data](#reference-data) above).
-
-**Command (Illumina FASTQ, open-source run)**
-
-```
-nextflow run main.nf \
-  --input_csv $PWD/tests/data/inputs/input_qcTest3.csv \
-  --genomes_base /path/to/local/genomes \
-  --architecture x86 \
-  --genome GRCh38 \
-  --outputDir test \
-  --max_cpus 8 --max_memory 30.GB
-```
-
-**Command (Ultima CRAM, open-source run)**
-
-```
-nextflow run main.nf \
-  --input_csv $PWD/tests/data/inputs/input_ultima_subsampled.csv \
-  --genomes_base /path/to/local/genomes \
-  --architecture x86 \
-  --genome GRCh38 \
-  --outputDir test \
-  --max_cpus 8 --max_memory 30.GB
-```
-
-> The open-source run is the default, so `--pipeline_tool` is not required. The
-> open-source alignment stages (BWA-MEM2, Picard) are x86-only, so use
-> `--architecture x86`. The subsampling and merge stages additionally provide
-> arm-native images if you run those on Graviton.
-
-## Input Options
-
-The input is passed via an `input.csv` file. The platform is auto-detected from
-the columns present.
-
-- **Illumina / Element (FASTQ)** — columns `biosampleName`, `read1`, `read2`:
+**Illumina / Element (FASTQ)**: `biosampleName,read1,read2`
 
 ```
 biosampleName,read1,read2
-chr22_testsample1,s3://.../chr22_testsample1_R1.fastq.gz,s3://.../chr22_testsample1_R2.fastq.gz
-chr22_testsample2,s3://.../chr22_testsample2_R1.fastq.gz,s3://.../chr22_testsample2_R2.fastq.gz
+sample1,/data/sample1_R1.fastq.gz,/data/sample1_R2.fastq.gz
+sample2,/data/s2_L001_R1.fastq.gz|/data/s2_L002_R1.fastq.gz,/data/s2_L001_R2.fastq.gz|/data/s2_L002_R2.fastq.gz
 ```
 
-  Multi-lane inputs are supported by pipe-delimiting (`|`) multiple paths within
-  `read1`/`read2`.
+Separate multiple lanes with `|`. read1 and read2 must list the same number of lanes.
 
-- **Ultima (CRAM)** — columns `biosampleName`, `cram` (the `.cram.crai` index is
-  auto-discovered, or supply an optional `crai` column):
+**Ultima (CRAM)**: `biosampleName,cram[,crai]`. If `crai` is omitted, `<cram>.crai`
+is used.
 
 ```
 biosampleName,cram
-HG001-UltimaWGS_Z0022,s3://.../HG001-UltimaWGS_Z0022.cram
+sample1,/data/sample1.cram
 ```
 
-**Optional `groups` column**: an optional `groups` column can carry sample group
-information used by the QC plotting / consensus-score grouping.
-
-## Command Options
+# Usage
 
 ```
-    Usage:
-        nextflow run main.nf [options]
-
-    Script Options: see nextflow.config
-
-        [required]
-        --input_csv         FILE    Path to input csv file
-
-        [pipeline tool]
-        --pipeline_tool     STR     Tool selection: 'opensource' (BWA-MEM2 + samtools markdup -r + Picard)
-                                    or 'sentieon' (proprietary).
-                                    DEFAULT: opensource
-
-        --architecture      STR     Compute architecture: 'arm' (Graviton) or 'x86'.
-                                    Use 'x86' for the open-source run (alignment is x86-only).
-                                    DEFAULT: arm
-
-        [optional]
-        --genomes_base      STR     Base path to the reference-genome bundle. Set this to your
-                                    local download directory for public/offline runs.
-                                    DEFAULT: s3://bioskryb-shared-data
-
-        --genome            STR     Reference genome. Options: GRCh38, GRCm39, ARSUCD2
-                                    DEFAULT: GRCh38
-
-        --outputDir         DIR     Path to run output directory
-                                    DEFAULT: results
-
-        --n_reads           VAL     Number of reads to subsample for QC
-                                    DEFAULT: 2000000
-
-        --read_length       VAL     Read length used for Ginkgo reference selection
-                                    DEFAULT: 50
-
-        --bin_size          VAL     Ginkgo CNV bin size (500000, 1000000, 2000000)
-                                    DEFAULT: 1000000
-
-        --help              BOOL    Display help message
+nextflow run main.nf \
+  --input_csv input.csv \
+  --genomes_base /path/to/genomes \
+  --outputDir results \
+  --max_cpus 8 --max_memory 28.GB
 ```
 
-## Tool versions (open-source run)
+| Option | Default | Description |
+|---|---|---|
+| `--input_csv` | (required) | Input CSV (see [Input](#input)) |
+| `--outputDir` | `results` | Output directory |
+| `--genomes_base` | `s3://bioskryb-shared-data` | Root of the reference bundle |
+| `--genome` | `GRCh38` | Reference genome (GRCh38 only) |
+| `--n_reads` | `2000000` | Reads per biosample after subsampling |
+| `--seqkit_sample_seed` / `--samtools_seed` | `12345` | Subsampling seeds (FASTQ / CRAM) |
+| `--platform` | `ILLUMINA` | Read-group platform tag for FASTQ input |
+| `--run_gcbias` | `true` | Compute GC-bias metrics |
+| `--skip_cnv` | auto | Skip the Ginkgo CNV branch |
+| `--bin_size` | `1000000` | Ginkgo bin size |
+| `--read_length` | `50` | Read length used to select the Ginkgo reference |
+| `--workspace`, `--workflow_id`, `--dataset_id` | | Labels used in output paths and tables |
+| `--max_cpus`, `--max_memory` | | Per-task resource caps |
 
-- `SeqKit: 2.13.0`
-- `fastp: 0.20.1`
-- `BWA-MEM2: 2.2.1`
-- `samtools: 1.23.1`
-- `Picard: 3.1.x`
-- `preseq: 2.0.3` (includes `bam2mr`)
-- `bedtools: 2.28.0`
-- `Ginkgo: 0.3.1`
-- `MultiQC: 1.33`
+# Outputs
 
-## Outputs
+Under `--outputDir` (`<ws>` = `--workspace`, `<wf>` = `--workflow_id`):
 
-Outputs are written to the directory specified by `--outputDir`, including
-per-biosample QC Parquet files, merged metric tables, CNV summaries, QC plots,
-consensus scores, and a MultiQC report.
+| Path | Contents |
+|---|---|
+| `workflow_outputs/<ws>/<wf>/reports/multiqc_report.html` | MultiQC report |
+| `workflow_outputs/<ws>/<wf>/metrics/qc_metrics/dnaqc_all_metrics.tsv` | All metrics, one row per biosample |
+| `workflow_outputs/<ws>/<wf>/index/per_biosample_status.csv` | QC verdict per biosample |
+| `workflow_outputs/<ws>/<wf>/index/{metrics,dedup_metrics,bam}.csv` | Indexes of the per-sample files |
+| `workflow_outputs/<ws>/<wf>/metrics/{rustqc,dedup,preseq}/` | Per-sample bskryb-qc, dupblaster and preseq outputs |
+| `workflow_outputs/<ws>/<wf>/cnv/` | Ginkgo RDS, SegCopy and CNV plots |
+| `workflow_outputs/<ws>/<wf>/qc_plots/` | QC composition, score distribution and CNV-quadrant plots |
+| `workflow_outputs/<ws>/<wf>/execution_info/tool_mqc_versions.yml` | Tool and container versions |
+| `tables/dnaqc_summary/...` | Per-biosample QC Parquet |
+| `tables/cnv_summary/...` | Per-biosample Ginkgo bin-level CNV Parquet |
+| `bam/<ws>/dna/tool=minibwa-rs/pipeline=dnaqc/` | Subsampled, duplicate-marked BAMs + BAI |
 
+# Migrating from 1.x
+
+| | 1.x | 2.0 |
+|---|---|---|
+| Aligner | BWA-MEM2 (or Sentieon) | minibwa-rs |
+| Duplicates | samtools markdup `-r` (removed) | dupblaster (flagged with 0x400, kept in the BAM) |
+| Metrics | Picard CollectMultipleMetrics / Sentieon | bskryb-qc single pass |
+| `--pipeline_tool` | `opensource` / `sentieon` | removed (single implementation) |
+| `--architecture` | `arm` / `x86` | x86 only |
+| Genomes | GRCh38, GRCm39, ARSUCD2 | GRCh38 |
+| `groups` CSV column | used for plot grouping | not used |
+| BAM output path | `bam/<ws>/dna/tool=bwa-mem2/pipeline=dnaqc/` | `bam/<ws>/dna/tool=minibwa-rs/pipeline=dnaqc/` |
+| Reference bundle | BWA-MEM2 index | **adds** the minibwa index and GC-bias windows (see [Reference Data](#reference-data)) |
+
+QC verdicts matched 1.x (Sentieon) on our benchmark biosamples. Known metric
+differences:
+
+- Optical duplicates are not detected, so the optical-duplicate fields are 0.
+- Ultima `total_reads` counts primary reads only (about 12% lower than 1.x).
+- Insert-size metrics are empty for single-end (Ultima) data.
+- `pct_chrm` and other alignment-derived rates drift slightly because of the new
+  aligner.
+- `dnaqc_summary` has extra columns and a different column order. The index file
+  is still named `index/metrics.csv`.
 
 # Docker User / File Permissions
 
-The custom images run as a non-root user (`appuser`). On hosts where your user ID
-differs from the image's, containerized tasks can fail to write to the Nextflow work
-directory with `touch: cannot touch '.command.trace': Permission denied` (typically
-on the Ginkgo and preseq steps). If you hit this, tell Nextflow to run the task
-containers as your own user:
+The custom images run as a non-root `appuser`. If tasks fail with
+`touch: cannot touch '.command.trace': Permission denied`, run containers as your
+own user with a `local.config`:
 
-1. Create a file named `local.config` next to `main.nf` with this content:
+```groovy
+docker {
+    runOptions = '-u $(id -u):$(id -g)'
+}
+```
 
-   ```groovy
-   docker {
-       runOptions = '-u $(id -u):$(id -g)'
-   }
-   ```
-
-2. Add `-c local.config` to your `nextflow run` command, for example:
-
-   ```
-   nextflow run main.nf \
-     -c local.config \
-     --input_csv $PWD/tests/data/inputs/input_qcTest3.csv \
-     --genomes_base /path/to/local/genomes \
-     --architecture x86 --genome GRCh38 \
-     --outputDir test --max_cpus 8 --max_memory 30.GB
-   ```
-
-`$(id -u)`/`$(id -g)` are filled in by your shell at runtime, so the containers run
-as you and can write to the work directory.
-
+and add `-c local.config` to `nextflow run`.
 
 # Testing
 
-## Test Data Access
+The nf-test case runs two chr22 samples against chr22 test references. The
+inputs live on the Wasabi-backed `s3://bioskryb-public-data` bucket (contact
+BioSkryb support for access keys). Point Nextflow at Wasabi in `~/.nextflow/config`:
 
-Test data is stored on Wasabi-backed S3 at `s3://bioskryb-public-data/pipeline_resources/dev-resources/local_test_files/`.
-
-To access the test data:
-
-**Step 1 — Get your access keys**
-
-Retrieve your AWS credentials from BioSkryb support (contact basejumper-support for the access link).
-
-**Step 2 — Set environment variables**
-
-```bash
-export AWS_ACCESS_KEY_ID=<provided_access_key>
-export AWS_SECRET_ACCESS_KEY=<provided_secret_key>
-export AWS_DEFAULT_REGION=us-east-1
+```groovy
+aws {
+  region = 'us-east-1'
+  client {
+    endpoint = 'https://s3.us-east-1.wasabisys.com'
+    s3PathStyleAccess = true
+  }
+}
 ```
 
-## Running a Test
+Then:
 
-Run the pipeline with the provided test input CSV:
-
-```bash
-nextflow run main.nf \
-  --input_csv tests/data/inputs/nftest_input.csv \
-  --max_cpus 8 --max_memory 24.GB --architecture x86 \
-  --genome GRCh38 --n_reads 500000 \
-  --pipeline_tool opensource \
-  --outputDir results_test
 ```
-
-## nf-test (Automated Testing)
-
-Install nf-test (requires Java 11+):
-
-```bash
-curl -fsSL https://code.askimed.com/install/nf-test | bash
-mv nf-test /usr/local/bin/
-```
-
-Run the automated tests:
-
-```bash
-# Run all tests
-nf-test test
-
-# Run only the GRCh38 opensource test
+bash container/build_all_x86.sh
 nf-test test tests/main.nf.test --tag GRCh38
 ```
 
-> The `GRCh38` opensource test is the one exercised automatically by the release CI.
-
+`NFTEST_GENOMES_BASE` overrides the test reference location (default
+`s3://bioskryb-public-data/pipeline_resources/test_genomes`). The test sets
+`skip_cnv = true`, because chr22-only CNV skew is undefined.
 
 # Need Help?
 
@@ -339,5 +230,5 @@ If you need any help, please [submit a helpdesk ticket](https://bioskryb.atlassi
   [https://www.biorxiv.org/content/10.1101/2024.04.26.587806v1.full](https://www.biorxiv.org/content/10.1101/2024.04.26.587806v1.full)
 
 NOTE: Several studies have utilized BaseJumper pipelines as part of standard
-quality control processes implemented through ResolveServices<sup>SM</sup>. While these pipelines may not be explicitly cited, they are integral to the
-methodologies described.
+quality control processes implemented through ResolveServices<sup>SM</sup>. While these
+pipelines may not be explicitly cited, they are integral to the methodologies described.
