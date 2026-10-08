@@ -4,6 +4,10 @@ library(dplyr)
 library(tibble)
 library(pheatmap)
 
+# Get genome from command line argument (e.g., GRCh38, GRCm39)
+args <- commandArgs(trailingOnly = TRUE)
+genome <- if (length(args) >= 1) args[1] else "GRCh38"
+is_mouse <- grepl("GRCm", genome, ignore.case = TRUE)
 
 #Process  Star matrix
 df_star <- read.table(file = "./df_gene_counts_starhtseq.tsv",header = TRUE,sep = "\t") %>%
@@ -17,6 +21,14 @@ Tab_STAR_Raw <- acast(data = df_star,formula = File~gene_id+gene_symbol,
 
 
 write.table(x = Tab_STAR_Raw,file = "./matrix_gene_counts_starhtseq.txt",append = FALSE,quote = FALSE,sep = "\t",row.names = FALSE,col.names = TRUE)
+
+# Skip housekeeping analysis for mouse genome
+if (is_mouse) {
+  cat("Gene\n", file = "HouseKeepingGenes_Counts_mqc.tsv")
+  cat("Gene\tCV\n", file = "HouseKeepingGenes_CV_mqc.tsv")
+  file.create("HKGenes_Expression__mqc.png")
+  quit(save = "no", status = 0)
+}
 
 # Housekeeping genes analysis
 hk.genes <- c("GAPDH","ACTB","RPL36","HINT1","TBP","PPIA","B2M","HPRT1","UBC","RPL13A",
@@ -33,7 +45,7 @@ hk.idx <- gene.symbols %in% hk.genes
 x.hkg <- x.ge[hk.idx, , drop = FALSE]
 
 # Write housekeeping gene counts per sample
-x.hkg.counts <- as.data.frame(x.hkg) %>% 
+x.hkg.counts <- as.data.frame(x.hkg) %>%
   rownames_to_column(var = "Gene")
 
 write.table(x.hkg.counts, "HouseKeepingGenes_Counts_mqc.tsv", quote=F, na="", sep="\t", row.names=FALSE, col.names=TRUE)
@@ -48,17 +60,17 @@ if (n_samples > 1) {
     CV = as.numeric(apply(x.hkg, 1, sd, na.rm=T) / apply(x.hkg, 1, mean, na.rm=T)),
     stringsAsFactors = FALSE
   )
-  
+
   # Write CV table
   write.table(x.hkg.CV, "HouseKeepingGenes_CV_mqc.tsv", quote=F, na="", sep="\t", row.names=FALSE, col.names=TRUE)
-  
+
   # Create clustergram for housekeeping genes
   # Generate PDF
-  pheatmap(x.hkg, 
-           cluster_rows = TRUE, 
-           cluster_cols = TRUE, 
+  pheatmap(x.hkg,
+           cluster_rows = TRUE,
+           cluster_cols = TRUE,
            scale = "row",
-           show_rownames = TRUE, 
+           show_rownames = TRUE,
            show_colnames = TRUE,
            main = "HouseKeeping Genes Expression Clustergram",
            fontsize_row = 10,
@@ -66,13 +78,13 @@ if (n_samples > 1) {
            filename = "HouseKeepingGenes_Expression.pdf",
            width = 10,
            height = 8)
-  
+
   # Generate PNG
-  pheatmap(x.hkg, 
-           cluster_rows = TRUE, 
-           cluster_cols = TRUE, 
+  pheatmap(x.hkg,
+           cluster_rows = TRUE,
+           cluster_cols = TRUE,
            scale = "row",
-           show_rownames = TRUE, 
+           show_rownames = TRUE,
            show_colnames = TRUE,
            main = "Housekeeping Genes Expression Clustergram",
            fontsize_row = 10,
@@ -86,5 +98,3 @@ if (n_samples > 1) {
   cat("# Clustergram requires multiple samples\n", file = "HKGenes_Expression__mqc.png")
   cat("# Clustergram requires multiple samples\n", file = "HouseKeepingGenes_Expression.pdf")
 }
-
-
