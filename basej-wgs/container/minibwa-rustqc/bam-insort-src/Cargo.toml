@@ -1,0 +1,34 @@
+[package]
+name = "bam-insort"
+version = "0.1.0"
+edition = "2021"
+description = "In-memory coordinate sort + BAI index for BAM, reading query-grouped BAM/SAM from stdin. Rust replacement for `samtools sort | samtools index` that avoids the external-merge spill/merge tail by sorting entirely in RAM (rayon parallel sort) with parallel BGZF output."
+license = "MIT"
+
+[[bin]]
+name = "bam-insort"
+path = "src/main.rs"
+
+[dependencies]
+# Pin the whole noodles stack to one coherent release. noodles-bam 0.56 and
+# noodles-csi 0.30 both depend on noodles-bgzf 0.26, so we pin bgzf to 0.26 too;
+# otherwise a second bgzf (0.30) sneaks in and its VirtualPosition type is
+# incompatible with csi's Chunk::new (used when building the BAI).
+noodles-bam = "=0.56.0"
+noodles-sam = "=0.53.0"
+noodles-bgzf = "=0.26.0"
+noodles-core = "=0.14.0"
+noodles-csi = "=0.30.0"
+rayon = "1.10"
+bstr = "1"
+# Fast codec for internal spill files: spilling raw records uncompressed moved
+# ~245 GB through disk twice (write in phase 1, read in phase 2) and dominated the
+# tail. zstd at a low level (~3-5x smaller) cuts that I/O dramatically; the input
+# rate (~60 MB/s) is far below zstd's single-thread throughput so it doesn't stall
+# phase-1 routing. Only used for internal spill — the BAM output stays standard BGZF.
+zstd = "0.13"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

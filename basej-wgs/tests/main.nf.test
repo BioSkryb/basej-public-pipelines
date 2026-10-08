@@ -3,125 +3,165 @@ nextflow_pipeline {
     name "Test Workflow main.nf"
     script "main.nf"
 
-    test("wgs_GRCh38_test") {
+    // chr22-only test reference bundle (minibwa index, GC windows, chr22 IDT panel subset).
+    // NFTEST_GENOMES_BASE points the tests at a local copy of the same bundle for development.
+    def genomesBase = System.getenv("NFTEST_GENOMES_BASE") ?: "s3://bioskryb-public-data/pipeline_resources/test_genomes"
+    // Non-N bases in the chr22 wgs_coverage_regions interval (full GRCh38 value: 2745186691).
+    def chr22Territory = 37071985
+
+    test("wgsqc_GRCh38_test") {
         tag "GRCh38"
         when {
             params {
-                outputDir              = "${outputDir}"
-                workspace              = "demo"
-                workflow_id            = "test_wgs_GRCh38"
-                input_csv              = "$baseDir/tests/data/inputs/nftest_input.csv"
-                genomes_base           = "s3://bioskryb-public-data/pipeline_resources/test_genomes"
-                max_memory             = "12.GB"
-                max_cpus               = "4"
-                architecture           = "x86"
-                genome                 = "GRCh38"
-                mode                   = "wgs"
-                skip_subsampling       = true
-                pipeline_tool          = "opensource"
+                outputDir        = "${outputDir}"
+                workspace        = "demo"
+                workflow_id      = "test_wgs_GRCh38"
+                input_csv        = "$baseDir/tests/data/inputs/nftest_input.csv"
+                genomes_base     = genomesBase
+                genome_territory = chr22Territory
+                max_memory       = "12.GB"
+                max_cpus         = "4"
+                architecture     = "x86"
+                genome           = "GRCh38"
+                mode             = "wgs"
+                skip_subsampling = true
             }
         }
 
         then {
+            def wf = "${outputDir}/workflow_outputs/demo/test_wgs_GRCh38"
             assertAll(
-
                 { assert workflow.success },
+                { assert path("${wf}/reports/multiqc_report.html").exists() },
+                { assert path("${wf}/qc_plots/qc_wgs.pdf").exists() },
+                { assert path("${wf}/qc_plots/WGS-QC_composition_mqc.jpg").exists() },
+                { assert path("${wf}/metrics/wgsqc_metrics/WGS-QC_ConsensusScores.txt").exists() },
+                { assert path("${wf}/index/bam.csv").exists() },
+                { assert path("${wf}/index/per_biosample_status.csv").readLines().size() == 3 },
 
-                { assert path("${outputDir}/workflow_outputs/demo/test_wgs_GRCh38/reports/multiqc_report.html").exists() },
-
-                // Check wgsqc_all_metrics.tsv - full-schema TSV for nf-test validation
+                // Python verdict (Parquet) and R consensus score must agree for every sample
                 {
-                    def f = path("${outputDir}/workflow_outputs/demo/test_wgs_GRCh38/metrics/wgsqc_metrics/wgsqc_all_metrics.tsv")
+                    def rows = path("${wf}/qc_plots/qc_score_concordance.tsv").readLines().drop(1)
+                    assert rows.size() == 2
+                    rows.each { r -> assert r.split('\t')[-1] == 'match' : "QC score mismatch: ${r}" }
+                },
+
+                {
+                    def f = path("${wf}/metrics/wgsqc_metrics/wgsqc_all_metrics.tsv")
                     assert f.exists()
                     def lines  = f.readLines()
                     def header = lines[0].split('\t').toList()
-
-                    // Required columns must be present
                     [
-                        'qc_score', 'qc_status', 'total_reads', 'pct_duplication',
-                        'mean_coverage', 'pct_chimeras',
-                        'pf_aligned_bases', 'pf_hq_aligned_reads', 'pf_hq_aligned_bases',
-                        'pf_hq_aligned_q20_bases', 'pf_hq_error_rate', 'pct_adapter',
-                        'insert_median', 'insert_mad', 'insert_min', 'insert_max',
-                        'gc_nc_0_19', 'gc_nc_20_39', 'gc_nc_40_59', 'gc_nc_60_79', 'gc_nc_80_100',
-                        'median_coverage', 'mad_coverage',
-                        'pct_1x', 'pct_5x', 'pct_10x',
-                        'pct_exc_mapq', 'pct_exc_dupe', 'pct_exc_baseq', 'pct_exc_total',
-                    ].each { col ->
-                        assert header.contains(col) : "Missing column: ${col}"
-                    }
-
+                        'qc_score', 'qc_status', 'total_reads', 'total_reads_source', 'pct_duplication',
+                        'mean_coverage', 'pct_chimeras', 'pf_hq_error_rate', 'insert_median',
+                        'gc_nc_40_59', 'median_coverage', 'pct_1x', 'pct_5x', 'pct_10x', 'pct_exc_total',
+                    ].each { col -> assert header.contains(col) : "Missing column: ${col}" }
                     def idx = { col -> header.indexOf(col) }
+                    def dbl = { v -> (v && v != 'NA' && !v.isEmpty()) ? v.toDouble() : null }
 
-                    // Helper: parse a numeric cell, skip if blank/None
-                    def dbl = { v -> (v && v != 'None' && !v.isEmpty()) ? v.toDouble() : null }
-                    def lng = { v -> (v && v != 'None' && !v.isEmpty()) ? v.toLong()   : null }
-
-                    // Values from chr22-only test reference (genomes_base = test_genomes).
-                    // Reads map to chr22 only, so coverage/exclusion metrics differ from a
-                    // full-genome run; qc_status/qc_score remain FAIL/2 at this depth.
+                    // chr22-only reference: reads from the whole genome are forced onto chr22, so
+                    // coverage/chimera values differ from a full-genome run.
                     def expected = [
-                        'ResolveOMEv2.0-384-WGS-B4':  [total_reads: 1988082, qc_status: 'FAIL', qc_score: 2],
-                        'ResolveOMEv2.0-384-WGS-D3':  [total_reads: 1986997, qc_status: 'FAIL', qc_score: 2],
+                        'ResolveOMEv2.0-384-WGS-B4': 2000390,
+                        'ResolveOMEv2.0-384-WGS-D3': 1999522,
                     ]
-
-                    assert lines.size() - 1 == expected.size() : "Expected ${expected.size()} samples, got ${lines.size() - 1}"
-
+                    assert lines.size() - 1 == expected.size()
                     for (int i = 1; i < lines.size(); i++) {
-                        def cols   = lines[i].split('\t', -1)
-                        def sample = cols[0]
-                        def exp    = expected[sample]
-                        assert exp != null : "Unexpected sample in wgsqc_all_metrics.tsv: ${sample}"
-
-                        // total_reads: near-deterministic for skip_subsampling, but allow a
-                        // small tolerance to absorb aligner/thread-count jitter across runners.
-                        def totalReads = cols[idx('total_reads')].trim().toLong()
-                        assert totalReads >= (exp.total_reads * 0.97) && totalReads <= (exp.total_reads * 1.03) : "total_reads out of range for ${sample}: ${totalReads} (expected ~${exp.total_reads})"
-                        assert cols[idx('qc_status')].trim()             == exp.qc_status   : "qc_status mismatch for ${sample}"
-                        assert cols[idx('qc_score')].trim().toDouble().intValue() == exp.qc_score : "qc_score mismatch for ${sample}"
-
-                        // mean_coverage: reads concentrate on chr22 → observed ~0.54x
-                        def meanCov = dbl(cols[idx('mean_coverage')].trim())
-                        if (meanCov != null) assert meanCov > 0 && meanCov < 2.0 : "mean_coverage out of range for ${sample}: ${meanCov}"
-
-                        // pct_duplication: observed ~0.027 on chr22-only mapping
-                        def pctDup = dbl(cols[idx('pct_duplication')].trim())
-                        if (pctDup != null) assert pctDup >= 0.0 && pctDup <= 0.10 : "pct_duplication out of range for ${sample}: ${pctDup}"
-
-                        // pct_chimeras: observed 0.05-0.06
-                        def chimeras = dbl(cols[idx('pct_chimeras')].trim())
-                        if (chimeras != null) assert chimeras >= 0.02 && chimeras <= 0.15 : "pct_chimeras out of range for ${sample}: ${chimeras}"
-
-                        // pct_1x: observed ~0.158 on chr22-only mapping
-                        def pct1x = dbl(cols[idx('pct_1x')].trim())
-                        if (pct1x != null) assert pct1x >= 0.05 && pct1x <= 0.30 : "pct_1x out of range for ${sample}: ${pct1x}"
-
-                        // pct_5x/pct_10x: observed ~0.019 / ~0.009
-                        ['pct_5x', 'pct_10x'].each { col ->
-                            def v = dbl(cols[idx(col)].trim())
-                            if (v != null) assert v >= 0.0 && v < 0.05 : "${col} out of range for ${sample}: ${v}"
-                        }
-
-                        // GC normalised coverage — sanity range checks
-                        def gcNc4059 = dbl(cols[idx('gc_nc_40_59')].trim())
-                        if (gcNc4059 != null) assert gcNc4059 >= 0.5 && gcNc4059 <= 1.5 : "gc_nc_40_59 out of range for ${sample}: ${gcNc4059}"
-
-                        // Insert size — observed median ~235-286 on chr22-only mapping
-                        def insMedian = dbl(cols[idx('insert_median')].trim())
-                        if (insMedian != null) assert insMedian >= 150.0 && insMedian <= 400.0 : "insert_median out of range for ${sample}: ${insMedian}"
+                        def c = lines[i].split('\t', -1)
+                        def s = c[idx('biosample')]
+                        assert expected.containsKey(s) : "Unexpected sample: ${s}"
+                        // raw input reads (deterministic: no subsampling)
+                        assert c[idx('total_reads')].toLong() == expected[s] : "total_reads ${s}"
+                        assert c[idx('total_reads_source')] == 'raw_input'
+                        assert c[idx('qc_status')] == 'FAIL' && c[idx('qc_score')].toDouble().intValue() == 2 : "qc ${s}"
+                        def v
+                        v = dbl(c[idx('mean_coverage')]);   assert v > 0.2  && v < 0.8  : "mean_coverage ${s}: ${v}"
+                        v = dbl(c[idx('pct_1x')]);          assert v > 0.05 && v < 0.3  : "pct_1x ${s}: ${v}"
+                        v = dbl(c[idx('pct_5x')]);          assert v >= 0   && v < 0.05 : "pct_5x ${s}: ${v}"
+                        v = dbl(c[idx('pct_duplication')]); assert v >= 0   && v < 0.10 : "pct_duplication ${s}: ${v}"
+                        v = dbl(c[idx('pct_chimeras')]);    assert v > 0.2  && v < 0.6  : "pct_chimeras ${s}: ${v}"
+                        v = dbl(c[idx('insert_median')]);   assert v > 150  && v < 400  : "insert_median ${s}: ${v}"
+                        v = dbl(c[idx('gc_nc_40_59')]);     assert v > 0.5  && v < 1.5  : "gc_nc_40_59 ${s}: ${v}"
                     }
                 },
 
-                // Verify wgsqc_summary parquet files exist for all samples
                 {
-                    assert path("${outputDir}/tables/wgsqc_summary/workspace=demo/workflow_id=test_wgs_GRCh38/biosample=ResolveOMEv2.0-384-WGS-B4/output.parquet").exists()
-                    assert path("${outputDir}/tables/wgsqc_summary/workspace=demo/workflow_id=test_wgs_GRCh38/biosample=ResolveOMEv2.0-384-WGS-D3/output.parquet").exists()
-                },
-
-                // Verify QC plot was generated
-                { assert path("${outputDir}/workflow_outputs/demo/test_wgs_GRCh38/qc_plots/qc_wgs.pdf").exists() }
+                    ['ResolveOMEv2.0-384-WGS-B4', 'ResolveOMEv2.0-384-WGS-D3'].each { s ->
+                        assert path("${outputDir}/tables/wgsqc_summary/workspace=demo/workflow_id=test_wgs_GRCh38/biosample=${s}/output.parquet").exists()
+                    }
+                }
             )
         }
     }
 
+    test("wesqc_GRCh38_test") {
+        tag "GRCh38"
+        when {
+            params {
+                outputDir        = "${outputDir}"
+                workspace        = "demo"
+                workflow_id      = "test_wes_GRCh38"
+                input_csv        = "$baseDir/tests/data/inputs/nftest_input_exome.csv"
+                genomes_base     = genomesBase
+                max_memory       = "12.GB"
+                max_cpus         = "4"
+                architecture     = "x86"
+                genome           = "GRCh38"
+                mode             = "exome"
+                exome_panel      = "xGen Exome Hyb Panel v2"
+                skip_subsampling = true
+            }
+        }
+
+        then {
+            def wf = "${outputDir}/workflow_outputs/demo/test_wes_GRCh38"
+            assertAll(
+                { assert workflow.success },
+                { assert path("${wf}/reports/multiqc_report.html").exists() },
+                { assert path("${wf}/qc_plots/qc_wes.pdf").exists() },
+                { assert path("${wf}/qc_plots/WES-QC_composition_mqc.jpg").exists() },
+                { assert path("${wf}/metrics/wesqc_metrics/WES-QC_ConsensusScores.txt").exists() },
+                { assert path("${wf}/index/bam.csv").exists() },
+                {
+                    def rows = path("${wf}/qc_plots/qc_score_concordance.tsv").readLines().drop(1)
+                    assert rows.size() == 2
+                    rows.each { r -> assert r.split('\t')[-1] == 'match' : "QC score mismatch: ${r}" }
+                },
+                {
+                    def f = path("${wf}/metrics/wesqc_metrics/wesqc_all_metrics.tsv")
+                    assert f.exists()
+                    def lines  = f.readLines()
+                    def header = lines[0].split('\t').toList()
+                    def idx = { col -> header.indexOf(col) }
+                    def dbl = { v -> (v && v != 'NA' && !v.isEmpty()) ? v.toDouble() : null }
+                    def expected = [
+                        'ResolveOME-Exome-IDTxGenV2-96Plex-4Hr-01H-SC': 2003300,
+                        'ResolveOME-Exome-IDTxGenV2-96Plex-4Hr-02B-SC': 2000368,
+                    ]
+                    assert lines.size() - 1 == expected.size()
+                    for (int i = 1; i < lines.size(); i++) {
+                        def c = lines[i].split('\t', -1)
+                        def s = c[idx('biosample')]
+                        assert expected.containsKey(s) : "Unexpected sample: ${s}"
+                        assert c[idx('total_reads')].toLong() == expected[s] : "total_reads ${s}"
+                        assert c[idx('qc_status')] == 'FAIL' && c[idx('qc_score')].toDouble().intValue() == 1 : "qc ${s}"
+                        // WGS coverage block is null in exome mode; target metrics come from HsMetrics
+                        assert dbl(c[idx('mean_coverage')]) == null : "mean_coverage must be null in exome mode"
+                        def v
+                        v = dbl(c[idx('mean_target_coverage')]); assert v > 1.0  && v < 6.0  : "mean_target_coverage ${s}: ${v}"
+                        v = dbl(c[idx('pct_target_bases_10x')]); assert v >= 0   && v < 0.2  : "pct_target_bases_10x ${s}: ${v}"
+                        v = dbl(c[idx('zero_cvg_targets_pct')]); assert v > 0.02 && v < 0.3  : "zero_cvg_targets_pct ${s}: ${v}"
+                        v = dbl(c[idx('fold_enrichment')]);      assert v > 5    && v < 60   : "fold_enrichment ${s}: ${v}"
+                        v = dbl(c[idx('pct_duplication')]);      assert v >= 0   && v < 0.10 : "pct_duplication ${s}: ${v}"
+                        v = dbl(c[idx('insert_median')]);        assert v > 100  && v < 300  : "insert_median ${s}: ${v}"
+                    }
+                },
+                {
+                    ['ResolveOME-Exome-IDTxGenV2-96Plex-4Hr-01H-SC', 'ResolveOME-Exome-IDTxGenV2-96Plex-4Hr-02B-SC'].each { s ->
+                        assert path("${outputDir}/tables/wesqc_summary/workspace=demo/workflow_id=test_wes_GRCh38/biosample=${s}/output.parquet").exists()
+                    }
+                }
+            )
+        }
+    }
 }
