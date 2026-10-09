@@ -53,7 +53,25 @@ from SigProfilerAssignment import Analyzer; print('SigProfiler stack OK')"
 
 # Bake the GRCh38 reference genome into the image (~3GB) — the mutsig process
 # passes no reference path, so the genome must be pre-installed.
-RUN python -c "from SigProfilerMatrixGenerator import install as genInstall; genInstall.install('GRCh38')"
+#
+# On 2026-09-25 the SigProfiler FTP replaced GRCh38.tar.gz with a rebuilt genome
+# (checksums only known to SPMG >= 1.4.0) and kept the previous data as
+# GRCh38_Legacy.tar.gz. SPMG 1.3.6 verifies against the previous checksums, so a
+# plain install('GRCh38') now fails with "GRCh38 has not been installed". Install
+# the legacy archive under the GRCh38 name instead: it is the exact data this
+# image was validated with. The final step fails the build unless every
+# chromosome matches SPMG 1.3.6's GRCh38 checksums.
+ARG SPMG_FTP=ftp://alexandrovlab-ftp.ucsd.edu/pub/tools/SigProfilerMatrixGenerator
+RUN set -eux; \
+    tsb_dir="$(python -c 'from SigProfilerMatrixGenerator.scripts import ref_install; print(ref_install.reference_dir().get_tsb_dir())')"; \
+    mkdir -p "${tsb_dir}"; \
+    wget -q -O /tmp/GRCh38_Legacy.tar.gz "${SPMG_FTP}/GRCh38_Legacy.tar.gz"; \
+    tar -xzf /tmp/GRCh38_Legacy.tar.gz -C "${tsb_dir}"; \
+    rm -rf "${tsb_dir}/GRCh38"; \
+    mv "${tsb_dir}/GRCh38_Legacy" "${tsb_dir}/GRCh38"; \
+    rm -f /tmp/GRCh38_Legacy.tar.gz; \
+    python -c "from SigProfilerMatrixGenerator import install as genInstall; genInstall.install('GRCh38')"; \
+    python -c "from SigProfilerMatrixGenerator.scripts.reference_genome_manager import ReferenceGenomeManager as M; m = M(); ok = m.is_genome_installed('GRCh38'); m.print_genome_checksum_verification_report('GRCh38') if not ok else None; assert ok, 'GRCh38 checksum verification failed'; print('GRCh38 (legacy data) verified')"
 
 # Helper script(s) invoked by the lineage MERGE_ACTIVITIES_* processes (python /scripts/...).
 RUN mkdir -p /scripts
