@@ -707,7 +707,7 @@ res$df_sum_verdict_group %>% gt::gt()
 write.table(res$df_verdict, "RNA-QC_ConsensusScores.txt", sep = "\t", quote = FALSE, row.names = FALSE)
 
 write.table(res$df_sum_verdict,
-            file = "summary_verdict.txt",
+            file = "RNA-QC_ConsensusScores_SummaryTable_mqc.txt",
             sep = "\t",
             quote = FALSE,
             row.names = FALSE,

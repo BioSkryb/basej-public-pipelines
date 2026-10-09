@@ -174,14 +174,67 @@ process SEQKIT_SAMPLE {
 }
 
 // ============================================================================
+// PROCESS: CUTADAPT
+// Description: Remove the library-prep TSO / template-switch adapter before QC
+//              trimming. Mirrors the CUTADAPT module of the BJ-Expression
+//              (nf-scrnaseq) pipeline byte-for-byte in terms of adapter flags so
+//              that both pipelines present STAR with the same read set:
+//                  -b <r1>  anywhere in R1
+//                  -B <r2>  anywhere in R2
+//                  -a <r1>  3' end of R1 (kept for parity with BJ-Expression;
+//                           redundant with -b since cutadapt trims one adapter
+//                           per read by default)
+//              No length filter is applied here on purpose — dropping short
+//              reads is what inflates the STAR "uniquely mapped %" denominator.
+//              -j is safe to parallelize: cutadapt guarantees output order and
+//              content are identical regardless of the core count.
+// ============================================================================
+process CUTADAPT {
+    tag "${sample_name}"
+
+    input:
+    tuple val(sample_name), path(reads)
+    val(adapter_r1)
+    val(adapter_r2)
+
+    output:
+    tuple val(sample_name), path("*_cutadapt.fastq.gz"), emit: reads
+    path("${sample_name}_cutadapt.log"), emit: log
+
+    script:
+    """
+    cutadapt \\
+        -j ${task.cpus} \\
+        -b ${adapter_r1} \\
+        -B ${adapter_r2} \\
+        -a ${adapter_r1} \\
+        -o ${sample_name}_R1_cutadapt.fastq.gz \\
+        -p ${sample_name}_R2_cutadapt.fastq.gz \\
+        ${reads[0]} ${reads[1]} \\
+        > ${sample_name}_cutadapt.log
+    """
+}
+
+// ============================================================================
 // PROCESS: FASTP_TRIM
-// Description: Adapter trimming with auto-detection
+// Description: Quality trimming / filtering. Adapter handling is controlled by
+//              `disable_adapter_trimming`:
+//                false -> --detect_adapter_for_pe (fastp owns adapter removal;
+//                         PE-overlap detection also shortens reads, and the
+//                         default --length_required 15 then discards the ones
+//                         that end up too short)
+//                true  -> --disable_adapter_trimming (CUTADAPT already removed
+//                         the adapter; fastp does QC only). This is the
+//                         BJ-Expression behaviour and keeps far more reads.
+//              Running both CUTADAPT and --detect_adapter_for_pe would trim
+//              adapters twice, so the workflow always pairs them inversely.
 // ============================================================================
 process FASTP_TRIM {
     tag "${sample_name}"
 
     input:
     tuple val(sample_name), path(reads)
+    val(disable_adapter_trimming)
 
     output:
     tuple val(sample_name), path("*_trim.fastq.gz"), emit: reads
@@ -189,12 +242,13 @@ process FASTP_TRIM {
     path("${sample_name}_fastp.json"), emit: json_flat
 
     script:
+    def adapter_opt = disable_adapter_trimming ? "--disable_adapter_trimming" : "--detect_adapter_for_pe"
     """
     fastp --thread ${task.cpus} \\
         --in1 ${reads[0]} --in2 ${reads[1]} \\
         --out1 ${sample_name}_R1_trim.fastq.gz --out2 ${sample_name}_R2_trim.fastq.gz \\
         --json ${sample_name}_fastp.json --html ${sample_name}_fastp.html \\
-        --detect_adapter_for_pe \\
+        ${adapter_opt} \\
         2> ${sample_name}_fastp.log
     """
 }
@@ -846,7 +900,11 @@ for sample in sorted(sample_names):
                     parts = line.strip().split("\\t")
                     if len(parts) >= 2:
                         gene_id = parts[0]
-                        count = int(parts[1]) if parts[1].isdigit() else 0
+                        # htseq-count runs with --additional-attr=gene_name, so each row is
+                        # gene_id \t gene_name \t count (special "__" rows carry an empty
+                        # gene_name: gene_id \t \t count). The count is ALWAYS the last field;
+                        # parts[1] is the gene name, so reading it zeroed every count.
+                        count = int(parts[-1]) if parts[-1].isdigit() else 0
 
                         if gene_id.startswith("__"):
                             if gene_id == "__no_feature":
@@ -1372,6 +1430,13 @@ skip_generalstats: true
 module_order:
   - custom_content
   - fastp
+  - cutadapt
+
+# CUTADAPT writes its report to <sample>_cutadapt.log; point MultiQC's cutadapt
+# module at that filename so the trimming summary is picked up.
+sp:
+  cutadapt:
+    fn: '*_cutadapt.log'
 
 report_section_order:
   rnaqc_summary:
@@ -1567,6 +1632,8 @@ workflow {
         ch_readcount_metrics = SAMTOOLS_SUBSAMPLE_CRAM.out.read_counts_file.collect()
         // Create empty fastp metrics (not applicable for Ultima)
         ch_fastp_metrics = Channel.value([])
+        // Create empty cutadapt logs (not applicable for Ultima — CRAM is pre-aligned)
+        ch_cutadapt_logs = Channel.empty()
         // Create empty STAR log files (not applicable for Ultima)
         ch_star_logs = Channel.value([])
 
@@ -1613,7 +1680,25 @@ workflow {
         },
         params.seqkit_sample_seed
     )
-        FASTP_TRIM(SEQKIT_SAMPLE.out.reads)
+
+        // Read prep: seqkit -> cutadapt -> fastp (QC only), matching BJ-Expression.
+        // The two stages are coupled on purpose: whenever CUTADAPT runs, fastp's
+        // adapter trimming is disabled so adapters are not trimmed twice.
+        ch_cutadapt_logs = Channel.empty()
+        if (!params.skip_cutadapt) {
+            CUTADAPT(
+                SEQKIT_SAMPLE.out.reads,
+                params.adapter_sequence,
+                params.adapter_sequence_r2
+            )
+            ch_for_fastp = CUTADAPT.out.reads
+            ch_cutadapt_logs = CUTADAPT.out.log
+        } else {
+            log.warn "skip_cutadapt=true — falling back to fastp --detect_adapter_for_pe for adapter removal"
+            ch_for_fastp = SEQKIT_SAMPLE.out.reads
+        }
+
+        FASTP_TRIM(ch_for_fastp, !params.skip_cutadapt)
 
         // Alignment
         if (!params.star_index) {
@@ -1734,6 +1819,7 @@ workflow {
     // path ("Not a valid path value type: ... DataflowStream").
     ch_mqc = RNA_QC_PLOTS.out.mqc_metrics.flatten()
         .mix(ch_fastp_metrics.flatten())
+        .mix(ch_cutadapt_logs)
         .mix(PLOTTER_PCAHEATMAP.out.plots.flatten())
         .mix(RNA_QC_PLOTS.out.composition_jpg)
         .mix(CREATE_HTSEQ_MATRIX.out.housekeeping_genes_CV)

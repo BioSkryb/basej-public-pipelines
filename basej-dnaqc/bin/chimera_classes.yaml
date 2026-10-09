@@ -1,0 +1,42 @@
+# Chimera mechanism classes (v1) — declarative views over the bskryb-qc chimera_cube.
+# The cube (LOCUS x ORIENT x DIST x SA) is emitted per sample; each cube cell is
+# assigned to the FIRST matching class below (top-down priority). This keeps the
+# reported composition reproducible (pin a version) while letting anyone define or
+# explore NEW mechanism classes by editing this file — no re-alignment needed.
+#
+# A rule matches a cell when, for every axis it names, the cell's value is in the list;
+# unnamed axes are wildcards. Axis vocab:
+#   locus:  same_contig | diff_contig
+#   orient: proper_FR | FF | RR | everted        (FF/RR = same-strand; everted = outie)
+#   dist:   na | lt_1kb | 1_10kb | 10_100kb | 100kb_1Mb | gt_1Mb   (|TLEN|; na = diff_contig)
+#   sa:     no_SA | has_SA                        (has_SA = split read / supplementary aln)
+#
+# 'proper' is the only non-chimeric class; the remaining classes partition PCT_CHIMERAS
+# and each maps to a physical mechanism (grounded in Lasken et al. MDA chimera model:
+# intramolecular inverted-repeat/foldback dominates).
+version: v1
+classes:
+  - name: proper                 # not chimeric: normal FR pair, local, no split
+    chimeric: false
+    match: {locus: [same_contig], orient: [proper_FR], dist: [lt_1kb, 1_10kb, 10_100kb], sa: [no_SA]}
+
+  - name: interchromosomal       # mate on a different contig — inter-molecular fusion
+    match: {locus: [diff_contig]}
+
+  - name: local_inverted_hairpin # same-strand + <1kb — MDA foldback/inverted-repeat (dominant artifact)
+    match: {locus: [same_contig], orient: [FF, RR], dist: [lt_1kb]}
+
+  - name: inverted_nonlocal      # same-strand but not local — distal inverted junction
+    match: {locus: [same_contig], orient: [FF, RR], dist: [1_10kb, 10_100kb, 100kb_1Mb, gt_1Mb]}
+
+  - name: everted_tandem         # outie orientation — tandem-dup / circular / read-through
+    match: {locus: [same_contig], orient: [everted]}
+
+  - name: large_insert           # normal orientation but >100kb apart — long-range intra-chrom join
+    match: {locus: [same_contig], orient: [proper_FR], dist: [100kb_1Mb, gt_1Mb]}
+
+  - name: split_read_only        # normal pair geometry but the read itself is split (SA)
+    match: {locus: [same_contig], orient: [proper_FR], dist: [lt_1kb, 1_10kb, 10_100kb], sa: [has_SA]}
+
+  - name: other                  # residual (should be ~0)
+    match: {}

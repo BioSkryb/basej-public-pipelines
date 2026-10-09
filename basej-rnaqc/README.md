@@ -13,7 +13,10 @@ proportion analysis, and composite QC scoring.
 Steps and tools used:
 
 - Subsample reads to 2 million using **SeqKit** (FASTQ) to compare metrics across samples
-- Evaluate sequencing quality and trim/clip reads using **fastp** (Illumina FASTQ)
+- Remove the template-switch oligo (TSO) adapter using **cutadapt** (Illumina FASTQ)
+- Evaluate sequencing quality and trim/filter reads using **fastp** (Illumina FASTQ). Adapter
+  trimming is disabled here because cutadapt already handled it; enabling both would
+  double-trim. Set `--skip_cutadapt` to fall back to fastp's own adapter detection.
 - Map reads to the reference genome using **STAR** (2-pass mode)
 - Filter to primary alignments and index using **samtools**
 - Quantify gene expression using **HTSeq** (gene-level counting)
@@ -25,7 +28,7 @@ Steps and tools used:
 
 The custom container images are **built locally** from the Dockerfiles in
 [`container/`](container/README.md) (see that README for the full image list and
-build instructions). Public biocontainers (fastp, STAR, samtools, qualimap,
+build instructions). Public biocontainers (cutadapt, fastp, STAR, samtools, qualimap,
 htseq, multiqc) are pulled directly from `quay.io`.
 
 # Running Locally
@@ -161,6 +164,7 @@ plotting / consensus-score grouping.
 ## Tool versions
 
 - `SeqKit: 2.13.0`
+- `cutadapt: 4.9`
 - `fastp: 0.20.1`
 - `STAR: 2.7.6a`
 - `samtools: 1.21`

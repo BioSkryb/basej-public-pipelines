@@ -4,6 +4,8 @@
 # which is NOT invocation-compatible (no -seg_len), so we build 2.0.3 which ships
 # the real `bam2mr`. preseq 2.0.3 bundles samtools 0.1.19; gcc 7 on ubuntu:18.04
 # compiles it cleanly (the -fno-common breakage only started with gcc 10).
+# Also ships samtools 1.9 (built from source; ubuntu:18.04 apt only has 1.7): the
+# PRESEQ step counts/filters primary reads with `samtools view` before bam2mr.
 # Tag: preseq_bam2mr_0.1
 #
 # Build:
@@ -22,6 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libgsl-dev \
         libncurses5-dev \
         libbz2-dev \
+        liblzma-dev \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Build preseq 2.0.3 + bam2mr. `make all` builds both `preseq` and `bam2mr`
@@ -33,6 +36,15 @@ RUN wget -q https://github.com/smithlabcode/preseq/releases/download/v${PRESEQ_V
     make all && \
     install -m 755 preseq bam2mr /usr/local/bin/ && \
     cd / && rm -rf preseq preseq_v${PRESEQ_VERSION}.tar.bz2
+
+# samtools 1.9 (matches the samtools reported in the pipeline's software versions).
+ARG SAMTOOLS_VERSION=1.9
+RUN wget -q https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSION}/samtools-${SAMTOOLS_VERSION}.tar.bz2 && \
+    tar xjf samtools-${SAMTOOLS_VERSION}.tar.bz2 && \
+    cd samtools-${SAMTOOLS_VERSION} && \
+    ./configure --prefix=/usr/local --disable-libcurl && \
+    make && make install && \
+    cd / && rm -rf samtools-${SAMTOOLS_VERSION} samtools-${SAMTOOLS_VERSION}.tar.bz2
 
 WORKDIR /data
 

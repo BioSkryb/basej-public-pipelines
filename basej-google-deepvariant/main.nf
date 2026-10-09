@@ -58,15 +58,22 @@ process DEEPVARIANT_MAKE_EXAMPLES_ONLY {
     script:
     def regions_arg = params.mode == "exome" ? "--regions ${regions}" : ""
     def gvcf_arg    = params.make_gvcf ? "--gvcf \"${sample_name}.gvcf.tfrecord@${task.cpus}.gz\"" : ""
-    // The bioskrybv2 (ResolveOME "rome") model was trained with an explicit
-    // channel set that adds the `identity` channel on top of the default
-    // BASE_CHANNELS + allele_frequency + insert_size used by bioskrybv1. The
-    // model's example_info.json declares a [100,221,10] / 9-channel input, so
-    // make_examples MUST build the same channels or call_variants fails on a
-    // tensor-shape mismatch. bioskrybv1 keeps the pipeline default (no flag),
-    // so this is additive and does not change the existing model's behaviour.
-    def channel_arg = params.deepvariant_model_type == "bioskrybv2" \
-        ? '--channel_list "BASE_CHANNELS,allele_frequency,identity,insert_size"' : ""
+    // Channel set for the selected model, taken from its genomes.config block
+    // (params.deepvariant_channel_list) rather than hardcoded per model name, so
+    // a new model is a config addition only.
+    //
+    // make_examples MUST build exactly the channels the checkpoint's
+    // example_info.json declares or call_variants fails on a tensor-shape
+    // mismatch. DeepVariant guarantees that itself: in calling mode with
+    // --checkpoint set (always, below) it reads example_info.json from the
+    // checkpoint directory and derives the channel set from it, consulting
+    // --channel_list only when the checkpoint supplied none
+    // (make_examples_options.py, google/deepvariant r1.8). So this flag is inert
+    // as used here and is emitted for provenance in the task command line. It is
+    // also why swapping --deepvariant_model by hand is unsafe while selecting a
+    // model by name is not: the checkpoint, not this flag, decides the channels.
+    def channel_arg = params.deepvariant_channel_list \
+        ? "--channel_list \"${params.deepvariant_channel_list}\"" : ""
     """
     set -e
     export DV_BIN_PATH=/opt/deepvariant/bin
@@ -381,9 +388,19 @@ workflow {
 // Resolved against the top-level `outputDir` config setting (= params.outputDir).
 // Paths mirror the basej-wgs convention so resumed runs republish cached
 // outputs to workflow_outputs/<workspace>/<workflow_id>/ for the original id.
+//
+// The VCF/gVCF tree is keyed by workspace only (NOT by workflow_id), so the
+// `tool=` segment carries the model name as well as the DeepVariant version:
+//   vcf/<workspace>/dna/tool=deepvariant-1.8.0-bioskrybv1/<sample>_deepvariant.vcf.gz
+//   vcf/<workspace>/dna/tool=deepvariant-1.8.0-bioskrybv2/<sample>_deepvariant.vcf.gz
+// Without the model name both models write the same object name to the same
+// prefix, so running bioskrybv1 and bioskrybv2 over the same biosamples has one
+// silently overwrite the other. Downstream consumers resolve VCFs through the
+// published index/vcf.csv (absolute paths), not by reconstructing this prefix,
+// so the extra segment is transparent to them.
 output {
     vcf_files {
-        path "vcf/${params.workspace}/dna/tool=deepvariant-${params.deepvariant_version}"
+        path "vcf/${params.workspace}/dna/tool=deepvariant-${params.deepvariant_version}-${params.deepvariant_model_type}"
         index {
             path "workflow_outputs/${params.workspace}/${params.workflow_id}/index/vcf.csv"
             header true
@@ -395,11 +412,12 @@ output {
              molecule_type: "dna",
              artifact:      "vcf",
              tool:          "deepvariant",
+             model:         params.deepvariant_model_type,
              reference:     params.genome
     }
 
     gvcf_files {
-        path "vcf/${params.workspace}/dna/tool=deepvariant-${params.deepvariant_version}/gvcf"
+        path "vcf/${params.workspace}/dna/tool=deepvariant-${params.deepvariant_version}-${params.deepvariant_model_type}/gvcf"
         index {
             path "workflow_outputs/${params.workspace}/${params.workflow_id}/index/gvcf.csv"
             header true
@@ -411,6 +429,7 @@ output {
              molecule_type: "dna",
              artifact:      "gvcf",
              tool:          "deepvariant",
+             model:         params.deepvariant_model_type,
              reference:     params.genome
     }
 
