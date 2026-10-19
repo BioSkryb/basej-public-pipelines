@@ -607,7 +607,7 @@ def main():
         cols = ["sample_name", "QC_Status", "Score", "preseq_count",
                 "PCT_CHIMERAS", "Chim_DiffContig_pct", "Chim_BadOrient_pct",
                 "Chim_LargeInsert_pct", "Chim_SplitSA_pct", "chrM", "MAPD_CNV",
-                "SKEW_CNV", "TotalReads", "FinalReads", "insert_size", "pct_duplication",
+                "SKEW_CNV", "Gini_Coefficient", "TotalReads", "FinalReads", "insert_size", "pct_duplication",
                 "fastp_q30_rate", "pct_aligned", "sentieon_q30_rate"] + chim_class_cols
         # Raw numeric values; display precision is controlled by the per-column
         # `headers.format` block below so small rate metrics are not rounded to
@@ -625,6 +625,8 @@ def main():
         vals.append(_num(summary.get('pct_chrm')))
         vals.append(_num(summary.get('ginkgo_cnv_mapd')))
         vals.append(_num(summary.get('ginkgo_cnv_skew')))
+        # Lorenz-curve coverage-evenness Gini (0 = perfectly even coverage).
+        vals.append(_num(summary.get('gini_coefficient_index')))
         vals.append(_num(summary.get('total_reads')))
         vals.append(_num(summary.get('final_reads')))
         vals.append(_num(summary.get('insert_size')))
@@ -642,6 +644,7 @@ def main():
             "Chim_DiffContig_pct": "{:.4f}", "Chim_BadOrient_pct": "{:.4f}",
             "Chim_LargeInsert_pct": "{:.4f}", "Chim_SplitSA_pct": "{:.4f}",
             "chrM": "{:.4f}", "MAPD_CNV": "{:.4f}", "SKEW_CNV": "{:.4f}",
+            "Gini_Coefficient": "{:.4f}",
             "TotalReads": "{:,.0f}", "FinalReads": "{:,.0f}",
             "insert_size": "{:.0f}", "pct_duplication": "{:.4f}",
             "fastp_q30_rate": "{:.4f}", "pct_aligned": "{:.4f}",
