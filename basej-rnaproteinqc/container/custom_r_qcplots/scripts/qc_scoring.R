@@ -72,7 +72,7 @@ QC_TIER_COLORS <- c(
 #'
 #' @return logical vector, TRUE where the cell is below the floor
 qc_depth_floor <- function(values, min_value = NULL, median_frac = NULL) {
-  v <- suppressWarnings(as.numeric(values))
+  v <- qc_numeric(values)
   if (!is.null(min_value)) {
     return(is.na(v) | v < min_value)
   }
@@ -82,6 +82,23 @@ qc_depth_floor <- function(values, min_value = NULL, median_frac = NULL) {
     return(is.na(v) | v < median_frac * med)
   }
   rep(FALSE, length(v))
+}
+
+
+#' Coerce a metrics column to numeric, tolerating the formats the pipelines actually write.
+#'
+#' Several metrics tables are built for MultiQC display as much as for machine reading, so read
+#' counts arrive with thousands separators ("1,234,567" - see basej-methylqc's TotalReads).
+#' Plain as.numeric() turns those into NA, which under `required_cols` would quietly mark every
+#' cell's depth as unmeasured and push a whole plate to Inconclusive. Percent signs and stray
+#' whitespace get the same treatment. Every numeric read in this file goes through here so the
+#' trap cannot be reintroduced one call site at a time.
+qc_numeric <- function(x) {
+  if (is.numeric(x)) return(x)
+  v <- as.character(x)
+  v <- gsub("[,%[:space:]]", "", v)
+  v[v %in% c("", "NA", "NaN", "NULL", ".", "-")] <- NA
+  suppressWarnings(as.numeric(v))
 }
 
 
@@ -123,7 +140,7 @@ qc_tier_meets <- function(df, spec) {
     if (!col %in% colnames(df)) {
       stop(sprintf("qc_tier_meets: column '%s' required by the tier spec is absent", col))
     }
-    v <- suppressWarnings(as.numeric(df[[col]]))
+    v <- qc_numeric(df[[col]])
     passed <- qc_cmp(v, spec[[col]])
     passed[is.na(passed)] <- FALSE
     ok <- ok & passed
@@ -155,7 +172,7 @@ qc_assign_tiers <- function(df, tiers, below_floor = NULL, required_cols = chara
     if (!col %in% colnames(df)) {
       stop(sprintf("qc_assign_tiers: required column '%s' is absent", col))
     }
-    measured <- measured & !is.na(suppressWarnings(as.numeric(df[[col]])))
+    measured <- measured & !is.na(qc_numeric(df[[col]]))
   }
 
   tier <- rep(1L, n)
@@ -185,7 +202,7 @@ qc_assign_tiers <- function(df, tiers, below_floor = NULL, required_cols = chara
     spec <- tiers[[tgt]]
     fails <- character()
     for (col in names(spec)) {
-      v <- suppressWarnings(as.numeric(df[[col]][i]))
+      v <- qc_numeric(df[[col]][i])
       passed <- qc_cmp(v, spec[[col]])
       if (is.na(passed) || !passed) fails <- c(fails, col)
     }
@@ -214,7 +231,7 @@ qc_require_metric <- function(df, cols, what = "CNV") {
     if (!col %in% colnames(df)) {
       stop(sprintf("%s metric '%s' is absent - cannot score. Did the upstream step run?", what, col))
     }
-    if (all(is.na(suppressWarnings(as.numeric(df[[col]]))))) {
+    if (all(is.na(qc_numeric(df[[col]])))) {
       stop(sprintf("%s metric '%s' is NA for every sample - cannot score. Did the upstream step run?",
                    what, col))
     }
