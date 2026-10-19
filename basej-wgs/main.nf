@@ -51,8 +51,9 @@ process MERGE_MULTILANE_FASTQ {
 
 // ============================================================================
 // PROCESS: SEQKIT_SAMPLE — optional subsample + raw read count (total_reads)
-//   WGS QC usually runs on full data (skip_subsampling=true). When enabled, caps
-//   to max_total_reads with seqkit proportion sampling (same logic as basej-wgs).
+//   By default (skip_subsampling=false) caps each biosample at max_total_reads reads
+//   across both mates with seqkit proportion sampling, same as cloud basej-wgs.
+//   Samples under the cap, or all samples with skip_subsampling=true, pass through.
 //   Always emits read_counts.txt: line1=TOTAL_READS(raw), line2=FINAL_READS.
 // ============================================================================
 process SEQKIT_SAMPLE {
@@ -64,30 +65,54 @@ process SEQKIT_SAMPLE {
     val(skip_subsampling)
 
     output:
-    tuple val(sample_name), path("${sample_name}_subsampled_R*.fastq.gz"), emit: reads
+    // Only written when the sample is actually subsampled. Otherwise SUBSAMPLED=false
+    // and main.nf hands the ORIGINAL reads to ALIGN_DEDUP_QC. The old `cp` of the full
+    // FASTQ pair doubled this task's disk footprint and failed on bulk samples
+    // ("No space left on device", run cbdCpg3HVh0OL).
+    tuple val(sample_name), path("${sample_name}_subsampled_R*.fastq.gz"), emit: reads, optional: true
+    tuple val(sample_name), env('SUBSAMPLED'), emit: decision
     tuple val(sample_name), path("${sample_name}_read_counts.txt"), emit: read_counts
 
     script:
     def r1 = reads[0]
     def r2 = reads[1]
+    def sample_threads = Math.max(1, (task.cpus as int).intdiv(2))
     """
     set -euo pipefail
     ( zcat '${r1}' | wc -l | awk '{print int(\$1/4)}' > read1.txt ) &
+    P1=\$!
     ( zcat '${r2}' | wc -l | awk '{print int(\$1/4)}' > read2.txt ) &
-    wait
+    P2=\$!
+    # Wait on each PID: a bare `wait` returns 0 even when a count failed, which let a
+    # corrupt/truncated FASTQ through with a wrong (e.g. 0) read count.
+    wait \$P1
+    wait \$P2
     R1=\$(cat read1.txt); R2=\$(cat read2.txt)
     export TOTAL_READS=\$((R1 + R2))
 
     if [ "${skip_subsampling}" = "true" ] || [ "\$TOTAL_READS" -le "${max_total_reads}" ]; then
-        cp '${r1}' '${sample_name}_subsampled_R1.fastq.gz'
-        cp '${r2}' '${sample_name}_subsampled_R2.fastq.gz'
+        SUBSAMPLED=false
         export FINAL_READS=\$TOTAL_READS
     else
+        SUBSAMPLED=true
         PROPORTION=\$(awk -v t="${max_total_reads}" -v tot="\$TOTAL_READS" 'BEGIN { printf "%.18f", t/tot }')
-        seqkit sample -p \$PROPORTION -s ${seqkit_sample_seed} -j ${task.cpus} -o '${sample_name}_subsampled_R1.fastq.gz' '${r1}'
-        seqkit sample -p \$PROPORTION -s ${seqkit_sample_seed} -j ${task.cpus} -o '${sample_name}_subsampled_R2.fastq.gz' '${r2}'
-        R1_SUB=\$(zcat '${sample_name}_subsampled_R1.fastq.gz' | wc -l | awk '{print int(\$1/4)}')
-        R2_SUB=\$(zcat '${sample_name}_subsampled_R2.fastq.gz' | wc -l | awk '{print int(\$1/4)}')
+        # R1 and R2 are sampled CONCURRENTLY (as in basej-dnaqc). Each seqkit run is
+        # bound by single-threaded gzip decode, so running the mates one after the other
+        # took >6 h for a 3.2 B-read bulk and hit the time limit (run JlOQ7yk9T0nnL).
+        # Selection is per-record and seeded (-s), so the pairs stay in sync.
+        seqkit sample -p \$PROPORTION -s ${seqkit_sample_seed} -j ${sample_threads} -o '${sample_name}_subsampled_R1.fastq.gz' '${r1}' & S1=\$!
+        seqkit sample -p \$PROPORTION -s ${seqkit_sample_seed} -j ${sample_threads} -o '${sample_name}_subsampled_R2.fastq.gz' '${r2}' & S2=\$!
+        wait \$S1
+        wait \$S2
+        ( zcat '${sample_name}_subsampled_R1.fastq.gz' | wc -l | awk '{print int(\$1/4)}' > sub1.txt ) & Q1=\$!
+        ( zcat '${sample_name}_subsampled_R2.fastq.gz' | wc -l | awk '{print int(\$1/4)}' > sub2.txt ) & Q2=\$!
+        wait \$Q1
+        wait \$Q2
+        R1_SUB=\$(cat sub1.txt); R2_SUB=\$(cat sub2.txt)
+        if [ "\$R1_SUB" -ne "\$R2_SUB" ]; then
+            echo "ERROR: subsampled mates out of sync (R1=\$R1_SUB R2=\$R2_SUB)" >&2
+            exit 1
+        fi
         export FINAL_READS=\$((R1_SUB + R2_SUB))
     fi
     echo "\$TOTAL_READS" > '${sample_name}_read_counts.txt'
@@ -168,12 +193,29 @@ process ALIGN_DEDUP_QC {
     # it partitions records into genomic buckets, sorts+compresses them in parallel, and
     # concatenates in genomic order — no serial merge. Output validated identical to
     # samtools sort/index. Memory-bounded via --max-mem-gb (spills) + --buckets.
+    #
+    # Fail fast: when a downstream stage dies (e.g. bam-insort on ENOSPC), stop the
+    # upstream stages instead of letting the task sit until the time limit. Run
+    # 2wfel0YmrJRruJ held an intense instance ~7 h after bam-insort had already failed.
+    # On failure, also delete local scratch (staged FASTQs/index, spills, partial BAM) so
+    # a retry placed on the same instance does not start on a full disk.
+    on_fail() {
+        rc=\$?
+        if [ "\$rc" -ne 0 ]; then
+            pkill -TERM -x minibwa-rs 2>/dev/null || true
+            pkill -TERM -x dupblaster 2>/dev/null || true
+            find . -mindepth 1 -maxdepth 1 ! -name '.*' -exec rm -rf {} + 2>/dev/null || true
+        fi
+    }
+    trap on_fail EXIT
     minibwa-rs map -a -x sr -A1 -B4 -O6 -E1 -Y -t ${threads} \\
         -R "@RG\\tID:${sample_name}\\tSM:${sample_name}\\tPL:${platform}" \\
         ${prefix} ${reads[0]} ${reads[1]} \\
-      | dupblaster --single-end-strategy picard-exact --tmp-dir \$PWD \\
+      | { dupblaster --single-end-strategy picard-exact --tmp-dir \$PWD \\
             --stats ${sample_name}.dupblaster.tsv --sample ${sample_name} -o - \\
-      | bam-insort -t ${threads} --max-mem-gb ${insort_mem_gb} --buckets ${insort_buckets} --tmp \$PWD -o ${sample_name}.bam
+          || { rc=\$?; pkill -TERM -x minibwa-rs || true; exit \$rc; }; } \\
+      | { bam-insort -t ${threads} --max-mem-gb ${insort_mem_gb} --buckets ${insort_buckets} --tmp \$PWD -o ${sample_name}.bam \\
+          || { rc=\$?; pkill -TERM -x dupblaster || true; pkill -TERM -x minibwa-rs || true; exit \$rc; }; }
 
     # Metrics on the LOCAL sorted BAM (no S3 round-trip), region-sharded across all cpus.
     # preseq/Lorenz skipped: low-pass single-cell metrics, meaningless on high-pass WGS.
@@ -197,7 +239,7 @@ process ALIGN_DEDUP_QC {
 
 // ============================================================================
 // PROCESS: SAMTOOLS_SUBSAMPLE_CRAM — Ultima: optional CRAM subsample to max_total_reads
-//   Only runs when skip_subsampling=false (WGS QC normally runs on full data).
+//   Runs unless skip_subsampling=true; CRAMs under the cap pass through unchanged.
 //   Counts PRIMARY records; samtools -s keeps whole templates by QNAME hash.
 //   Writes the shared read_counts.txt format (line1 TOTAL_READS, line2 FINAL_READS).
 // ============================================================================
@@ -405,6 +447,10 @@ process AGGREGATE_WGSQC_OUTPUTS {
     path(metrics_rows)
     path(status_rows)
     val(mode)
+    // Every biosample in input_csv, one per line. Samples whose per-sample tasks failed
+    // (errorStrategy ignores the last attempt) have no rows; they are listed in
+    // per_biosample_status.csv as FAIL so the run still reports them.
+    path(expected_biosamples)
 
     output:
     path("${mode == 'exome' ? 'wes' : 'wgs'}qc_all_metrics.tsv"), emit: summary_tsv
@@ -435,6 +481,21 @@ if metrics["biosample"].duplicated().any() or statuses["biosampleName"].duplicat
     raise SystemExit("ERROR: duplicate biosample rows in WGSQC aggregation inputs")
 if set(metrics["biosample"]) != set(statuses["biosampleName"]):
     raise SystemExit("ERROR: WGSQC metric and status biosample sets do not match")
+
+with open("${expected_biosamples}") as handle:
+    expected = {line.strip() for line in handle if line.strip()}
+missing = sorted(expected - set(statuses["biosampleName"]))
+if missing:
+    print("WARNING: no QC output (a per-sample task failed) for: " + ", ".join(missing))
+    statuses = pd.concat(
+        [statuses, pd.DataFrame({
+            "biosampleName": missing,
+            "qc_status": "FAIL",
+            "pipeline": statuses["pipeline"].iloc[0],
+            "pipeline_version": statuses["pipeline_version"].iloc[0],
+        })],
+        ignore_index=True,
+    ).sort_values("biosampleName")
 
 metrics.to_csv("${prefix}qc_all_metrics.tsv", sep="\\t", index=False, na_rep="NA")
 statuses.to_csv("per_biosample_status.csv", index=False)
@@ -561,8 +622,9 @@ with open("${status_csv}", newline="") as handle:
 
 if not metrics:
     raise SystemExit("ERROR: no WGSQC metrics rows were staged for MultiQC")
-if {row["biosample"] for row in metrics} != set(statuses):
-    raise SystemExit("ERROR: WGSQC metrics and status biosample sets do not match")
+# Status may also list biosamples that failed processing (FAIL, no metrics row).
+if not {row["biosample"] for row in metrics} <= set(statuses):
+    raise SystemExit("ERROR: WGSQC metrics rows have no matching status row")
 for row in metrics:
     if row["qc_status"] != statuses[row["biosample"]]:
         raise SystemExit(f"ERROR: QC status mismatch for {row['biosample']}")
@@ -777,11 +839,18 @@ workflow {
         params.seqkit_sample_seed,
         params.skip_subsampling
     )
+    // Samples SEQKIT_SAMPLE did not subsample align from their original reads. Joining on
+    // the decision also drops samples whose read count failed.
+    ch_align_reads = ch_reads
+        .join(SEQKIT_SAMPLE.out.decision)
+        .filter { s, r, subsampled -> subsampled == 'false' }
+        .map { s, r, subsampled -> tuple(s, r) }
+        .mix(SEQKIT_SAMPLE.out.reads)
 
     // Fused align/dedup/sort/QC. The BAM is kept when it is published (publish_bam, default
     // true) and always in exome mode, where CollectHsMetrics reads it.
     ALIGN_DEDUP_QC(
-        SEQKIT_SAMPLE.out.reads, ch_minibwa_index, params.platform ?: 'ILLUMINA',
+        ch_align_reads, ch_minibwa_index, params.platform ?: 'ILLUMINA',
         ch_base_intervals, ch_cov_intervals, ch_reference, ch_gcwin,
         params.publish_bam || exome
     )
@@ -854,7 +923,10 @@ workflow {
     AGGREGATE_WGSQC_OUTPUTS(
         WGSQC_METRICS_TO_PARQUET.out.metrics_row.collect(),
         WGSQC_METRICS_TO_PARQUET.out.status_row.collect(),
-        params.mode
+        params.mode,
+        ch_rows.fastq.mix(ch_rows.cram)
+            .map { name, row -> name }
+            .collectFile(name: 'expected_biosamples.txt', newLine: true, sort: true)
     )
 
     WGS_QC_PLOTS(AGGREGATE_WGSQC_OUTPUTS.out.summary_tsv, params.mode)

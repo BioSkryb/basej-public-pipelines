@@ -137,13 +137,13 @@
             "properties": {
                 "skip_subsampling": {
                     "type": "boolean",
-                    "default": true,
-                    "description": "Skip subsampling (WGS QC runs on full data by default)."
+                    "default": false,
+                    "description": "Set true to disable the max_total_reads cap and run every biosample at full depth. Default false: biosamples above the cap are subsampled to it (same as cloud basej-wgs)."
                 },
                 "max_total_reads": {
                     "type": "integer",
                     "default": 1000000000,
-                    "description": "Subsample target when skip_subsampling=false."
+                    "description": "Per-biosample read cap, counted across both mates (R1 + R2 records; primary records for CRAM). Biosamples at or under it are not subsampled. Ignored when skip_subsampling=true."
                 },
                 "seqkit_sample_seed": {
                     "type": "integer",
@@ -153,7 +153,7 @@
                 "samtools_seed": {
                     "type": "integer",
                     "default": 12345,
-                    "description": "Deterministic samtools subsampling seed for Ultima CRAM input (only when skip_subsampling=false)."
+                    "description": "Deterministic samtools subsampling seed for Ultima CRAM input (when a CRAM is above max_total_reads and skip_subsampling=false)."
                 }
             }
         },

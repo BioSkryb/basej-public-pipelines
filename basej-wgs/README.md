@@ -12,7 +12,8 @@ an open-source Rust toolchain. See [Migrating from 1.x](#migrating-from-1x).
 # Pipeline Overview
 
 - Concatenate multi-lane FASTQs (pipe-delimited lanes in the input CSV)
-- Optional subsampling to `--max_total_reads` with **SeqKit** (off by default)
+- Cap each biosample at `--max_total_reads` (default 1 B reads) with **SeqKit** (FASTQ) or
+  **samtools** (CRAM); biosamples under the cap use all reads. See [Read subsampling](#read-subsampling)
 - Align, mark duplicates, coordinate-sort, index and collect QC metrics in one fused
   step: **minibwa-rs** (BWA-MEM-lineage aligner) | **dupblaster** (Picard
   MarkDuplicates algorithm) | **bam-insort** (in-memory sort + BAI) | **bskryb-qc**
@@ -124,8 +125,8 @@ nextflow run main.nf \
 | `--mode` | `wgs` | `wgs` or `exome` |
 | `--exome_panel` | `xGen Exome Hyb Panel v2` | Exome panel: `xGen Exome Hyb Panel v2`, `TruSight One`, `TWIST`, `Agilent Clinical Exome`, `Twist Exome 2.0`, `xGen Pan-Cancer Hybridization Panel`, `Twist Alliance CNTG Hereditary Oncology Panel` |
 | `--target_intervals` | panel default | Custom exome target interval list |
-| `--skip_subsampling` | `true` | Run on all reads |
-| `--max_total_reads` | `1000000000` | Subsampling cap when `--skip_subsampling false` |
+| `--max_total_reads` | `1000000000` | Per-biosample read cap, counted across both mates. See [Read subsampling](#read-subsampling) |
+| `--skip_subsampling` | `false` | `true` disables the cap and runs every biosample at full depth |
 | `--seqkit_sample_seed` / `--samtools_seed` | `12345` | Subsampling seeds (FASTQ / CRAM) |
 | `--platform` | `ILLUMINA` | Read-group platform tag for FASTQ input |
 | `--run_gcbias` | `true` | Compute GC-bias metrics |
@@ -133,6 +134,25 @@ nextflow run main.nf \
 | `--genome_territory` | GRCh38 value | Non-N reference bases for WGS coverage metrics |
 | `--workspace`, `--workflow_id`, `--dataset_id` | | Labels used in output paths and tables |
 | `--max_cpus`, `--max_memory` | | Per-task resource caps |
+
+# Read subsampling
+
+By default each biosample is capped at `--max_total_reads` reads, the same as v1.x:
+
+| `--skip_subsampling` | Reads in the biosample (R1 + R2) | What runs |
+|---|---|---|
+| `false` (default) | at or under `--max_total_reads` | All reads, no subsampling |
+| `false` (default) | over `--max_total_reads` | Subsampled to about `--max_total_reads`, with a fixed seed; R1 and R2 stay paired |
+| `true` | any | All reads (full depth) |
+
+- `--max_total_reads` counts reads across **both** mates: the default of 1 000 000 000 is
+  500 M read pairs, about 50x for 2x150 bp human WGS. For Ultima CRAM it counts primary
+  records.
+- The outputs report both counts: `total_reads` is the raw input, `final_reads` is what was
+  aligned and measured.
+- Full depth (`--skip_subsampling true`) aligns each biosample in one task. Deep bulk
+  libraries then need a long time limit and a large scratch disk; a 39x library
+  (3.2 B reads) took about 8 hours on 62 CPUs.
 
 # Outputs
 
