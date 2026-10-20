@@ -42,8 +42,10 @@ jobs:
           # MANUAL pipelines are EXCLUDED from automated nf-test (validated by hand):
           #  - basej-rnaqc: needs the full RNA transcriptome reference (chr22-only makes
           #    gene detection too sparse for its PCA/heatmap).
+          #  - basej-rnaproteinqc: shares the same RNA QC backbone as basej-rnaqc, so it
+          #    has the same chr22 limitation for its PCA/heatmap and gene detection.
           ci_dirs="basej-dnaqc basej-wgs basej-somatic basej-lineage basej-google-deepvariant"
-          manual_dirs="basej-rnaqc"
+          manual_dirs="basej-rnaqc basej-rnaproteinqc"
 
           declare -a entries
           for dir in $ci_dirs; do
