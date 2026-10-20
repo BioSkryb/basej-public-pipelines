@@ -16,7 +16,11 @@ countSegs <- function(x.vec){
 }
 
 
-Dat <- readRDS("ginkgo_res.binsize_1000000.RDS")
+# PARSE_RDS_CNV_METRICS passes the staged RDS as the first argument; its name carries the
+# bin size (ginkgo_res.binsize_<bin_size>.RDS), so a hardcoded 1 Mb name broke other bin sizes.
+rds_args <- commandArgs(trailingOnly = TRUE)
+rds_file <- if (length(rds_args) >= 1) rds_args[1] else "ginkgo_res.binsize_1000000.RDS"
+Dat <- readRDS(rds_file)
 
 normal <- Dat$SegNorm[, 4:ncol(Dat$SegNorm), drop = FALSE]
 final <- Dat$SegCopy[, 4:ncol(Dat$SegCopy), drop = FALSE]

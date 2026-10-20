@@ -16,5 +16,9 @@ RUN apt-get update \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
+# Run as a non-root user (Trivy DS-0002)
+RUN useradd --create-home --shell /bin/bash appuser
+USER appuser
+
 ENTRYPOINT ["/usr/bin/env"]
 CMD ["bash"]

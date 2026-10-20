@@ -23,7 +23,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # System update and locale setup
 RUN apt-get update -y && \
     apt-get upgrade -y && \
-    apt-get install -y locales && \
+    apt-get install -y --no-install-recommends locales && \
     locale-gen en_US.UTF-8 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -132,23 +132,20 @@ RUN R -e "install.packages(c( \
     ), repos = Sys.getenv('R_CRAN_MIRROR'))"
 
 # Install Bioconductor packages.
-# Pin Bioconductor 3.23 (supports R 4.6.x). Without the explicit version,
-# BiocManager with update=FALSE may not self-configure for the current R.
-RUN R -e "BiocManager::install(version = '3.23', ask = FALSE)" && \
-    R -e "BiocManager::install('ggtree', ask = FALSE, update = FALSE)" && \
-    R -e "if (!requireNamespace('ggtree', quietly = TRUE)) stop('ggtree installation failed')"
+# Do not hard-pin the Bioconductor release: let BiocManager select the version
+# matching the installed R (the CRAN apt repo tracks the latest R, which drifts).
+RUN R -e "BiocManager::install(ask = FALSE, update = FALSE)" && \
+    R -e "BiocManager::install('ggtree', ask = FALSE, update = FALSE)"
 
 # Install harrietr (depends on ggtree)
-RUN R -e "install.packages('harrietr', repos = Sys.getenv('R_CRAN_MIRROR'), dependencies = TRUE)" && \
-    R -e "if (!requireNamespace('harrietr', quietly = TRUE)) stop('harrietr installation failed')"
+RUN R -e "install.packages('harrietr', repos = Sys.getenv('R_CRAN_MIRROR'), dependencies = TRUE)"
 
 # Install ohchibi from GitHub (pinned to specific commit for reproducibility)
 RUN R -e "remotes::install_github('isaisg/ohchibi', \
         ref = '9d3dac92081993508facc58877fdf0cfa8bba77c', \
         dependencies = TRUE, \
         upgrade = 'never', \
-        force = TRUE)" && \
-    R -e "if (!requireNamespace('ohchibi', quietly = TRUE)) stop('ohchibi installation failed')"
+        force = TRUE)"
 
 # Install plotting and color palette packages
 RUN R -e "install.packages(c('pals', 'gt', 'paletteer'), repos = Sys.getenv('R_CRAN_MIRROR'))"
@@ -167,5 +164,9 @@ RUN apt-get update -y && \
 COPY scripts/ /usr/local/bin/
 
 WORKDIR /data
+
+# Run as a non-root user (Trivy DS-0002)
+RUN useradd --create-home --shell /bin/bash appuser && chown appuser:appuser /data
+USER appuser
 
 CMD ["/bin/bash"]

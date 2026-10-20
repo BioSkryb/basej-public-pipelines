@@ -13,6 +13,11 @@ workspace: "demo"
 project: "test_project"
 
 # DeepVariant defaults
+# Model to run: bioskrybv1 (ResolveDNA, 8-channel), bioskrybv2 (ResolveOME
+# "rome", 9-channel) or resolvemethylv1 (ResolveMethyl, 9-channel). This one
+# switch also selects the population VCFs, and is included in the output path so
+# several models can run concurrently over the same biosamples.
+deepvariant_model_type: "bioskrybv1"
 deepvariant_version: "1.8.0"
 call_variants_batch_size: 1024
 

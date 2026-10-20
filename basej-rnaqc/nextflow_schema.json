@@ -133,6 +133,27 @@
                     "help_text": "When false (default) the pipeline computes per-sample transcript body coverage over housekeeping genes (RatioTranscriptBody, RangeTranscriptBody, MedianCoverageTranscriptBody) and an aggregate coverage plot. Automatically skipped for genomes without a housekeeping-gene bed (genebody_ref); only GRCh38 and GRCm39 define one.",
                     "fa_icon": "fas fa-chart-area",
                     "default": false
+                },
+                "skip_cutadapt": {
+                    "type": "boolean",
+                    "description": "Skip the cutadapt adapter-removal step.",
+                    "help_text": "When false (default) reads go through seqkit -> cutadapt -> fastp, and fastp runs with --disable_adapter_trimming so adapters are only removed once. This matches the BJ-Expression pipeline. When true, cutadapt is skipped and fastp reverts to --detect_adapter_for_pe, which also trims reads to their insert size and then drops those below --length_required 15 — inflating the STAR uniquely-mapped percentage while discarding usable reads.",
+                    "fa_icon": "fas fa-cut",
+                    "default": false
+                },
+                "adapter_sequence": {
+                    "type": "string",
+                    "description": "Read 1 adapter sequence passed to cutadapt (-b / -a).",
+                    "help_text": "Defaults to the SMART-seq template-switch oligo (TSO) used by BJ-Expression. Trimmed anywhere in read 1.",
+                    "fa_icon": "fas fa-dna",
+                    "default": "AAGCAGTGGTATCAACGCAGAGTACA"
+                },
+                "adapter_sequence_r2": {
+                    "type": "string",
+                    "description": "Read 2 adapter sequence passed to cutadapt (-B).",
+                    "help_text": "Defaults to the SMART-seq template-switch oligo (TSO) used by BJ-Expression. Trimmed anywhere in read 2.",
+                    "fa_icon": "fas fa-dna",
+                    "default": "AAGCAGTGGTATCAACGCAGAGTACAT"
                 }
             }
         }

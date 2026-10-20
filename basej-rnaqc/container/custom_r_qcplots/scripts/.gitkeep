@@ -1,0 +1,14 @@
+# QC plotting scripts directory
+#
+# The following R scripts should be placed here before building:
+#   - cnvSummarizer.R
+#   - function_cnv_quadrants_qc.R
+#   - function_plot_qc_dna.R
+#   - wgs_qc_plot.R
+#   - wes_qc_plot.R
+#   - rna_qc_plot.R
+#   - htseq_summarydf_to_matrix.R
+#   - plot_qc_config.json
+#
+# These scripts are maintained in the internal repository at:
+#   nf-bioskryb-utils/containers/qc_plots/scripts/

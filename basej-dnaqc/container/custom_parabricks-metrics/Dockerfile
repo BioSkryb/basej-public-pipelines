@@ -5,7 +5,8 @@
 # Build:
 #   docker build -t basejumper_custom_parabricks-metrics_1.0.3 .
 
-FROM python:3.8-slim-bullseye
+# bookworm: bullseye-security now 404s on several pinned packages (2026-10-07).
+FROM python:3.8-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
 

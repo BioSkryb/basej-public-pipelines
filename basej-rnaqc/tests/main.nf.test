@@ -60,6 +60,11 @@ nextflow_pipeline {
                      'Proportion Too Short'].each { t ->
                         assert html.contains(t) : "MultiQC rnaqc_summary table lost pre-existing column: ${t}"
                     }
+
+                    // Cutadapt section must render, proving the logs matched the runtime
+                    // config's `sp: cutadapt: fn: '*_cutadapt.log'` pattern.
+                    assert ['cutadapt_trimmed_sequences', 'cutadapt_filtered_reads'].any { lower.contains(it) } :
+                        "MultiQC report has no Cutadapt section (cutadapt logs not picked up)"
                 },
 
                 // Check rnaqc_all_metrics.tsv exists and has correct structure
@@ -85,13 +90,17 @@ nextflow_pipeline {
                     // all come back as null instead of throwing.
                     def num = { v -> (v ==~ /-?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?/) ? v.toDouble() : null }
 
-                    // Expected values per sample (pre-subsampled data, ~100-200K reads per sample)
+                    // total_reads is counted before subsampling, so it is exact regardless of n_reads.
+                    // qc_status/qc_score are measured at this test's n_reads=500000 with read prep
+                    // = cutadapt + fastp --disable_adapter_trimming. They are depth-sensitive and
+                    // depend on thresholds inside the custom_r_qcplots container, so re-measure
+                    // these two if either the read prep or that container changes.
                     def expected = [
-                        'ResolveOMEv2.1-RNA-04C': [total_reads: 716600,  qc_status: 'PASS', qc_score: 5],
-                        'ResolveOMEv2.1-RNA-04E': [total_reads: 894242,  qc_status: 'PASS', qc_score: 5],
-                        'ResolveOMEv2.1-RNA-06B': [total_reads: 584196,  qc_status: 'PASS', qc_score: 4],
-                        'ResolveOMEv2.1-RNA-07H': [total_reads: 429114,  qc_status: 'PASS', qc_score: 5],
-                        'ResolveOMEv2.1-RNA-08B': [total_reads: 779982,  qc_status: 'PASS', qc_score: 5],
+                        'ResolveOMEv2.1-RNA-04C': [total_reads: 716600, qc_status: 'PASS',       qc_score: 4],
+                        'ResolveOMEv2.1-RNA-04E': [total_reads: 894242, qc_status: 'PASS',       qc_score: 4],
+                        'ResolveOMEv2.1-RNA-06B': [total_reads: 584196, qc_status: 'Borderline', qc_score: 3],
+                        'ResolveOMEv2.1-RNA-07H': [total_reads: 429114, qc_status: 'Borderline', qc_score: 3],
+                        'ResolveOMEv2.1-RNA-08B': [total_reads: 779982, qc_status: 'PASS',       qc_score: 4],
                     ]
 
                     assert lines.size() - 1 == expected.size() : "Expected ${expected.size()} samples, got ${lines.size() - 1}"
@@ -103,13 +112,25 @@ nextflow_pipeline {
                         assert exp != null : "Unexpected sample in rnaqc_all_metrics.tsv: ${sample}"
 
                         assert cols[idx('total_reads')].trim().toLong()  == exp.total_reads : "total_reads mismatch for ${sample}"
+
                         assert cols[idx('qc_status')].trim()             == exp.qc_status   : "qc_status mismatch for ${sample}"
                         assert cols[idx('qc_score')].trim().toDouble().intValue() == exp.qc_score : "qc_score mismatch for ${sample}"
 
-                        // subsampled: True for samples with total_reads > n_reads (500000)
+                        // subsampled: True only when the input had more reads than n_reads
+                        def nReads = (params.n_reads as String).toLong()
                         def totalReads = cols[idx('total_reads')].trim().toLong()
-                        def expectedSubsampled = totalReads > 500000 ? 'True' : 'False'
+                        def expectedSubsampled = totalReads > nReads ? 'True' : 'False'
                         assert cols[idx('subsampled')].trim() == expectedSubsampled : "subsampled mismatch for ${sample}: expected ${expectedSubsampled}"
+
+                        // cutadapt owns adapter removal, so fastp must report zero adapter work.
+                        // Non-zero means --detect_adapter_for_pe crept back in and reads are
+                        // being double-trimmed.
+                        def fastpAdapterCol = idx('fastp_adapter_trimmed_reads')
+                        if (fastpAdapterCol >= 0) {
+                            def adapterReads = lng(cols[fastpAdapterCol].trim())
+                            if (adapterReads != null)
+                                assert adapterReads == 0 : "fastp_adapter_trimmed_reads for ${sample} is ${adapterReads}, expected 0 (cutadapt owns adapter removal; fastp should run --disable_adapter_trimming)"
+                        }
 
                         // STAR uniquely mapped: >50% for RNA
                         def starPct = dbl(cols[idx('star_uniquely_mapped_pct')].trim())

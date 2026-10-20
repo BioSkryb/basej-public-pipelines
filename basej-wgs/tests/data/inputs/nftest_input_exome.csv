@@ -1,0 +1,3 @@
+biosampleName,read1,read2
+ResolveOME-Exome-IDTxGenV2-96Plex-4Hr-01H-SC,s3://bioskryb-public-data/pipeline_resources/dev-resources/local_test_files/wes_test/ResolveOME-Exome-IDTxGenV2-96Plex-4Hr-01H-SC_R1.fastq.gz,s3://bioskryb-public-data/pipeline_resources/dev-resources/local_test_files/wes_test/ResolveOME-Exome-IDTxGenV2-96Plex-4Hr-01H-SC_R2.fastq.gz
+ResolveOME-Exome-IDTxGenV2-96Plex-4Hr-02B-SC,s3://bioskryb-public-data/pipeline_resources/dev-resources/local_test_files/wes_test/ResolveOME-Exome-IDTxGenV2-96Plex-4Hr-02B-SC_R1.fastq.gz,s3://bioskryb-public-data/pipeline_resources/dev-resources/local_test_files/wes_test/ResolveOME-Exome-IDTxGenV2-96Plex-4Hr-02B-SC_R2.fastq.gz

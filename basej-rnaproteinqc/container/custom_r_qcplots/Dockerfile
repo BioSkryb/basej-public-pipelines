@@ -1,8 +1,10 @@
-# custom_r_qcplots container (RNA QC version)
+# custom_r_qcplots container
 # Provides: R 4.5.x with extensive package set (ohchibi, ggpubr, dplyr, etc.)
 #           plus Python 3 with pyarrow for Parquet output
-# Scripts: rna_qc_plot.R, htseq_summarydf_to_matrix.R,
-#          qc_scoring.R + qc_scoring_specs.R (shared 1-5 tier scoring)
+# Scripts: dna_qc_plot.R, methyl_qc_plot.R, rna_qc_plot.R, wgs_qc_plot.R, wes_qc_plot.R,
+#          cnvSummarizer.R, function_cnv_quadrants_qc.R, htseq_summarydf_to_matrix.R,
+#          qc_scoring.R + qc_scoring_specs.R (shared 1-5 tier scoring - required by every
+#          plot script, which sources it from /usr/local/bin)
 # Tag: custom_r_qcplots_0.3.0
 #
 # Build:
@@ -129,7 +131,9 @@ RUN R -e "install.packages(c( \
         'ggpubr' \
     ), repos = Sys.getenv('R_CRAN_MIRROR'))"
 
-# Install Bioconductor packages
+# Install Bioconductor packages.
+# Do not hard-pin the Bioconductor release: let BiocManager select the version
+# matching the installed R (the CRAN apt repo tracks the latest R, which drifts).
 RUN R -e "BiocManager::install(ask = FALSE, update = FALSE)" && \
     R -e "BiocManager::install('ggtree', ask = FALSE, update = FALSE)"
 
